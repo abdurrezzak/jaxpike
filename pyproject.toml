@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jaxpike"
+version = "0.0.1.dev0"
+description = "Fast, flexible spiking neural networks in JAX."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Abdurrezak Efe" }]
+keywords = ["spiking neural networks", "snn", "jax", "neuromorphic", "lif"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "jax>=0.4.35",
+  "equinox>=0.11.4",
+  "optax>=0.2.2",
+  "jaxtyping>=0.2.28",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "hypothesis>=6.100",
+  "ruff>=0.6",
+]
+# Competitor frameworks, installed only to run the comparative benchmark suite.
+# Deliberately optional: they pull in torch and conflict with each other.
+bench = [
+  "snntorch>=0.9",
+  "norse>=1.1",
+  "spikingjelly>=0.0.0.0.14",
+  "torch>=2.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/refe-fb/jaxpike"
+Documentation = "https://github.com/refe-fb/jaxpike#readme"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jaxpike"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "NPY", "RUF"]
+ignore = [
+  # jaxtyping annotations like Float[Array, "T *rest"] carry a shape DSL inside the string.
+  # The quotes are load-bearing and the contents are not Python names, so the three rules that
+  # police string annotations all misfire on them. Stripping the quotes (UP037's autofix)
+  # would silently break shape checking.
+  "F722",  # syntax error in forward annotation
+  "F821",  # undefined name (shape variables: "T", "out", "*rest")
+  "UP037", # quoted annotation
+  "B008",  # calling a default-valued factory is idiomatic for equinox modules
+]
+
+[tool.coverage.run]
+source = ["src/jaxpike"]
