@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .execution import density, spike_count, spike_rate, unroll
+from .execution import density, spike_count, spike_rate, unroll, unroll_checkpointed
 from .layers import Dense, Sequential
 from .neurons import ALIF, LIF, ALIFState, LIFState
 from .surrogate import ATan, Boxcar, FastSigmoid, Surrogate, Triangular
@@ -26,4 +26,5 @@ __all__ = [
     "spike_count",
     "spike_rate",
     "unroll",
+    "unroll_checkpointed",
 ]
