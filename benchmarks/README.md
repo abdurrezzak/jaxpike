@@ -170,3 +170,45 @@ a few MB. So the two techniques currently sit at opposite ends of a tradeoff rat
 composing, and a user with a long sequence and a small GPU still wants checkpointing. Making
 them compose (chunked parallel scan: parallel within a chunk, checkpointed across chunks) is
 the obvious next piece of work and is not yet done.
+
+
+### 6. Reset-based LIF, parallel-in-time — **negative result**
+
+Reset makes the recurrence nonlinear, so the associative scan does not apply. The candidate
+tested was a chunked fixed point: sequential across chunks with an exact carry, and within
+each chunk iterate *guess spikes → solve the resulting linear system in parallel → recompute
+spikes* until the spike train stops changing. The fixed point is provably the exact solution
+(at t=0 the membrane depends on no spike, so s₀ is forced; by induction every later step is
+forced too, making the fixed point unique and equal to the sequential answer).
+
+T=2048, batch 16, 512 neurons, density 0.090, T4. Sequential scan: 0.0216 s.
+
+| chunk | iterations/chunk | wrong spikes | time | vs sequential |
+|---:|---:|---:|---:|---:|
+| 8 | 5.0 (max 6) | 0 / 16.7M | 0.0242 s | 0.92× |
+| 32 | 11.0 (max 13) | 4 / 16.7M | 0.0224 s | **0.99×** |
+| 128 | 32.6 (max 33) | 2 / 16.7M | 0.0330 s | 0.68× |
+| 512 | 109.5 (max 111) | 2 / 16.7M | 0.1152 s | 0.19× |
+
+**It does not pay off.** The best configuration is 0.99× — a wash — and it degrades from
+there. The reason is visible in the table: iterations needed grow roughly linearly with chunk
+size (5 → 11 → 33 → 110 as chunk goes 8 → 32 → 128 → 512), so every bit of extra parallelism
+bought by a larger chunk is spent immediately on more sequential iterations. Small chunks
+converge fast but expose little parallelism; large chunks expose parallelism but need too
+many passes. There is no window where the trade wins.
+
+The handful of wrong spikes are float32 noise, not a bug: 4 in 16.7 million, all at threshold
+crossings where two different summation orders straddle the boundary by ~1e-7. Worth
+remembering as a general caution — bit-exact spike comparisons are fragile near threshold
+whenever the reduction order changes.
+
+**What was ruled out.** Two simpler schemes were tried first and both fail outright. Plain
+Jacobi iteration over the whole sequence *oscillates*: starting from "no resets" produces too
+many spikes, applying all those resets produces none, and it 2-cycles forever. Damping
+(λ = 0.3/0.5/0.7) and a sigmoid-annealing homotopy both converge to "predict no spikes."
+
+**Conclusion.** Parallel-in-time stays a reset-free feature. This is the risk the plan's
+register flagged as most likely to fire, and it fired. The honest product position: reset-free
+`LinearLIF` gets 21.7× and is a legitimate published model class (PSN); reset-based `LIF`
+gets the sequential path with 67× memory reduction from checkpointing. Not solving reset is a
+real limitation and should be stated as one rather than hidden.
