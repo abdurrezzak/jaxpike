@@ -229,4 +229,62 @@ class LinearLIF(eqx.Module):
         return LIFState(v=v[-1]), self.surrogate(v - self.threshold)
 
 
-__all__ = ["ALIF", "LIF", "STATE_DTYPE", "ALIFState", "LIFState", "LinearLIF"]
+class LeakyIntegrator(eqx.Module):
+    """A LIF that never spikes: outputs membrane potential directly.
+
+        v[t] = alpha*v[t-1] + (1 - alpha)*x[t]
+
+    This is the standard SNN readout layer. Classifying on spike counts means the loss only
+    sees a unit at all once it crosses threshold, so a class that never fires produces no
+    gradient and can never learn to fire. Reading the continuous membrane instead keeps every
+    output unit differentiable from the first step.
+
+    Being linear and reset-free, it also parallelizes over time.
+    """
+
+    log_tau: Float[Array, "..."]
+    dt: float = eqx.field(static=True)
+
+    def __init__(self, tau: float | Array = 20.0, *, dt: float = 1.0):
+        tau_arr = jnp.asarray(tau, dtype=STATE_DTYPE)
+        if jnp.any(tau_arr <= dt):
+            raise ValueError(
+                f"tau must exceed dt={dt} or the discretization is unstable; got tau={tau}"
+            )
+        self.log_tau = jnp.log(tau_arr)
+        self.dt = dt
+
+    @property
+    def alpha(self) -> Array:
+        return jnp.exp(-self.dt / jnp.exp(self.log_tau))
+
+    def init_state(self, input_shape: tuple[int, ...]) -> LIFState:
+        return LIFState(v=jnp.zeros(input_shape, dtype=STATE_DTYPE))
+
+    def out_shape(self, input_shape: tuple[int, ...]) -> tuple[int, ...]:
+        return input_shape
+
+    def __call__(self, state: LIFState, x: Array) -> tuple[LIFState, Array]:
+        alpha = self.alpha
+        v = alpha * state.v + (1.0 - alpha) * x.astype(STATE_DTYPE)
+        return LIFState(v=v), v
+
+    def parallel_apply(self, state: LIFState, xs: Array) -> tuple[LIFState, Array]:
+        from .parallel import scan_linear_recurrence
+
+        alpha = self.alpha
+        xs = xs.astype(STATE_DTYPE)
+        a = jnp.broadcast_to(alpha, xs.shape)
+        v = scan_linear_recurrence(a, (1.0 - alpha) * xs, state.v)
+        return LIFState(v=v[-1]), v
+
+
+__all__ = [
+    "ALIF",
+    "LIF",
+    "STATE_DTYPE",
+    "ALIFState",
+    "LIFState",
+    "LeakyIntegrator",
+    "LinearLIF",
+]

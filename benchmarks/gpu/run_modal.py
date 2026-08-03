@@ -25,9 +25,12 @@ image = (
         "equinox>=0.11.4",
         "optax>=0.2.2",
         "jaxtyping>=0.2.28",
+        "h5py>=3.11",
+        "numpy>=1.26",
     )
     .add_local_dir(REPO / "src", "/root/src")
     .add_local_dir(REPO / "benchmarks", "/root/benchmarks")
+    .add_local_dir(REPO / "examples", "/root/examples")
 )
 
 app = modal.App("jaxpike-benchmarks", image=image)
@@ -35,7 +38,7 @@ app = modal.App("jaxpike-benchmarks", image=image)
 
 # T4 is the default because Modal's free tier allows it without a payment method on file;
 # A100/H100 require one. Override with --gpu once billing is set up.
-@app.function(gpu="T4", timeout=60 * 60)
+@app.function(gpu="T4", timeout=3 * 60 * 60)
 def run(bench: str = "memory", args: list[str] | None = None) -> str:
     import subprocess
     import sys
@@ -46,6 +49,7 @@ def run(bench: str = "memory", args: list[str] | None = None) -> str:
         "parallel": ["benchmarks/parallel_scan.py"],
         "network": ["benchmarks/network_parallel.py"],
         "reset": ["benchmarks/reset_parallel.py"],
+        "shd": ["examples/shd.py"],
     }
     targets = list(scripts.values()) if bench == "all" else [scripts[bench]]
 
@@ -60,7 +64,7 @@ def run(bench: str = "memory", args: list[str] | None = None) -> str:
 
 
 @app.local_entrypoint()
-def main(bench: str = "memory", gpu: str = "A100", lengths: str = "") -> None:
-    extra = ["--lengths", *lengths.split(",")] if lengths else []
+def main(bench: str = "memory", gpu: str = "T4", extra: str = "") -> None:
+    """`extra` is passed through to the script verbatim, e.g. --extra "--epochs 30 --lr 1e-3"."""
     fn = run.with_options(gpu=gpu)
-    print(fn.remote(bench=bench, args=extra))
+    print(fn.remote(bench=bench, args=extra.split() if extra else []))

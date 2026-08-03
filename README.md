@@ -2,12 +2,14 @@
 
 Fast, flexible spiking neural networks in JAX.
 
-> **Status: pre-alpha.** The reference implementation, test suite, and the first fast path
-> are in place. Measured on an NVIDIA T4: **21.7× faster training at T=8192** for a
-> feedforward network using parallel-in-time execution, with bit-identical spike trains, and
-> **67× lower BPTT memory** via rematerialization. Both reproducible from
-> [`benchmarks/`](benchmarks/). Parallel-in-time currently requires reset-free neurons
-> (`LinearLIF`); the general reset case is not solved yet. See [PLAN.md](PLAN.md).
+> **Status: pre-alpha.** Working library with a real result: **67.6% on Spiking Heidelberg
+> Digits**, against the ~48% published feedforward baseline, trained in under two minutes on
+> an NVIDIA T4. Parallel-in-time execution makes training **~2.5× faster end to end**
+> (17–21× on the isolated forward/backward pass) with bit-identical spike trains, and
+> rematerialization cuts BPTT memory **67×**. Everything is reproducible from
+> [`benchmarks/`](benchmarks/) and [`examples/`](examples/), including the cases where we
+> lose. Parallel-in-time requires reset-free neurons (`LinearLIF`); the general reset case is
+> measured, unsolved, and [written up](benchmarks/README.md). See [PLAN.md](PLAN.md).
 
 ## Why another SNN library
 
@@ -78,10 +80,10 @@ Layout is NHWC — `(time, batch, height, width, channels)` — because XLA's co
 written for channels-last and NCHW forces a transpose around every op.
 
 ```python
-gain = jp.lif_gain(tau=20.0)   # see below; deep SNNs go silent without it
+gain = jp.lif_gain(tau=20.0)  # see below; deep SNNs go silent without it
 
 net = jp.Sequential(
-    jp.Conv2d(2, 32, 3, key=k1, gain=gain),   # 2 channels: DVS on/off events
+    jp.Conv2d(2, 32, 3, key=k1, gain=gain),  # 2 channels: DVS on/off events
     jp.LinearLIF(tau=20.0, threshold=0.2),
     jp.Pool2d(2),
     jp.Conv2d(32, 64, 3, key=k2, gain=gain),

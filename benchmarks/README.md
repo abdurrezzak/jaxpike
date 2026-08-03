@@ -212,3 +212,53 @@ register flagged as most likely to fire, and it fired. The honest product positi
 `LinearLIF` gets 21.7× and is a legitimate published model class (PSN); reset-based `LIF`
 gets the sequential path with 67× memory reduction from checkpointing. Not solving reset is a
 real limitation and should be stated as one rather than hidden.
+
+
+---
+
+## Real task: Spiking Heidelberg Digits — 2026-08-03, NVIDIA T4
+
+SHD is the field's standard temporal benchmark: 20 spoken digits (English and German) turned
+into spike trains over 700 cochlear channels. Unlike rate-coded MNIST the temporal structure
+is genuine. Network: `Dense(700,256) → LinearLIF → Dense(256,256) → LinearLIF →
+Dense(256,20) → LeakyIntegrator`, max-membrane readout, AdamW.
+
+### Accuracy
+
+| | test accuracy |
+|---|---:|
+| **jaxpike, feedforward, 40 epochs** | **0.676** |
+| Cramer et al. 2020, feedforward reference | ~0.48 |
+| Cramer et al. 2020, recurrent reference | ~0.71 |
+
+Comfortably past the published feedforward baseline and near the recurrent one, without a
+recurrent layer, adaptive neurons, augmentation, or a learning-rate schedule. It overfits
+hard — training accuracy reaches 99.8% while test plateaus in the mid 60s — so the headroom
+here is regularization and data augmentation, not architecture.
+
+### Training speed, sequential versus parallel-in-time
+
+Whole-epoch wall clock, including data transfer, optimizer and evaluation.
+
+| timesteps | batch | sequential | parallel | speedup |
+|---:|---:|---:|---:|---:|
+| 250 | 128 | 3.9 s | 1.5 s | 2.6× |
+| 1,000 | 64 | 23.7 s | 10.0 s | 2.4× |
+
+**Calibration that matters: ~2.5× end-to-end, not the 17–21× from the microbenchmark.**
+An epoch is more than time-stepping — host-to-device transfer, the Dense matmuls, the
+optimizer and evaluation are all untouched by parallelizing the time axis, and Amdahl's law
+does the rest. The 17–21× figure is the isolated forward/backward speedup and should always
+be labelled as such. **~2.5× on real training is the number to quote to users.**
+
+### Two bugs this run exposed, both worth keeping
+
+**The whole dataset was being pinned in GPU memory.** The loader returned device arrays, so
+SHD at 1000 timesteps tried to allocate 22.8 GB on a 16 GB card and OOMed before training
+started. `iterate_batches` now requires host arrays and transfers only the current batch.
+
+**Binary spikes were stored as float32.** Fixing that to uint8 cut the dataset from 22.8 GB
+to 5.3 GB and, more importantly, cut per-batch PCIe traffic 4×. Before the fix the T=1000
+comparison showed only 1.56× — the input pipeline had become the bottleneck and was masking
+the compute win. After it, 2.4×. Worth remembering as a general rule: spike data is binary,
+so storing or transferring it as float is always four times more traffic than necessary.
