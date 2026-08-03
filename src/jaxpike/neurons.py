@@ -279,11 +279,129 @@ class LeakyIntegrator(eqx.Module):
         return LIFState(v=v[-1]), v
 
 
+# Izhikevich firing-pattern presets from Izhikevich (2003), "Simple Model of Spiking Neurons".
+# The whole appeal of the model is that four numbers reproduce most of the qualitative firing
+# behaviour real cortical neurons show, so these are exposed by name.
+IZHIKEVICH_PRESETS: dict[str, tuple[float, float, float, float]] = {
+    #                      a      b      c     d
+    "regular_spiking": (0.02, 0.20, -65.0, 8.0),
+    "intrinsically_bursting": (0.02, 0.20, -55.0, 4.0),
+    "chattering": (0.02, 0.20, -50.0, 2.0),
+    "fast_spiking": (0.10, 0.20, -65.0, 2.0),
+    "low_threshold_spiking": (0.02, 0.25, -65.0, 2.0),
+    "resonator": (0.10, 0.26, -65.0, 2.0),
+    "thalamo_cortical": (0.02, 0.25, -65.0, 0.05),
+}
+
+
+class IzhikevichState(eqx.Module):
+    v: Float[Array, "..."]
+    u: Float[Array, "..."]
+
+
+class Izhikevich(eqx.Module):
+    """Izhikevich neuron -- two variables, a quadratic term, and most of cortex's firing zoo.
+
+        v' = 0.04*v^2 + 5*v + 140 - u + I
+        u' = a*(b*v - u)
+        if v >= 30 mV:  v <- c,  u <- u + d
+
+    Unlike LIF this is a *spike-generating* model rather than a threshold-crossing one: the
+    quadratic term produces a genuine upstroke, and 30 mV is where the spike is detected at
+    its peak rather than a threshold in the LIF sense. That is what buys the variety --
+    bursting, chattering, adaptation, rebound -- from four parameters. Construct by name with
+    `Izhikevich.preset("chattering")`.
+
+    Three practical notes, because this model is less forgiving than LIF:
+
+    Voltages are in millivolts, not the dimensionless units the LIF classes use. Resting
+    potential is around -65 mV and input currents are on the order of 1-20. Weight
+    initialization tuned for LIF will do nothing here.
+
+    The quadratic term makes the forward Euler step unstable at dt=1: v can run away to
+    infinity within a step for large input. We sub-step (two half steps, as Izhikevich's own
+    code does) and clamp v, which keeps it finite without changing the dynamics below the
+    spike.
+
+    It is nonlinear in time, so it cannot use `unroll_parallel` -- there is no
+    `parallel_apply` here, and the error will say so.
+    """
+
+    log_tau_unused: Float[Array, "..."]  # placeholder keeps the pytree non-empty for grads
+    surrogate: Surrogate
+    a: float = eqx.field(static=True)
+    b: float = eqx.field(static=True)
+    c: float = eqx.field(static=True)
+    d: float = eqx.field(static=True)
+    v_peak: float = eqx.field(static=True)
+    v_scale: float = eqx.field(static=True)
+    dt: float = eqx.field(static=True)
+    substeps: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        a: float = 0.02,
+        b: float = 0.2,
+        c: float = -65.0,
+        d: float = 8.0,
+        *,
+        v_peak: float = 30.0,
+        v_scale: float = 5.0,
+        dt: float = 1.0,
+        substeps: int = 2,
+        surrogate: Surrogate | None = None,
+    ):
+        if substeps < 1:
+            raise ValueError(f"substeps must be >= 1, got {substeps}")
+        self.log_tau_unused = jnp.zeros(())
+        self.surrogate = surrogate if surrogate is not None else FastSigmoid()
+        self.a, self.b, self.c, self.d = a, b, c, d
+        self.v_peak, self.v_scale = v_peak, v_scale
+        self.dt, self.substeps = dt, substeps
+
+    @classmethod
+    def preset(cls, name: str, **kwargs) -> Izhikevich:
+        """Construct by firing pattern, e.g. ``Izhikevich.preset("fast_spiking")``."""
+        if name not in IZHIKEVICH_PRESETS:
+            raise ValueError(f"unknown preset {name!r}; available: {sorted(IZHIKEVICH_PRESETS)}")
+        a, b, c, d = IZHIKEVICH_PRESETS[name]
+        return cls(a, b, c, d, **kwargs)
+
+    def init_state(self, input_shape: tuple[int, ...]) -> IzhikevichState:
+        v = jnp.full(input_shape, self.c, dtype=STATE_DTYPE)
+        return IzhikevichState(v=v, u=self.b * v)
+
+    def out_shape(self, input_shape: tuple[int, ...]) -> tuple[int, ...]:
+        return input_shape
+
+    def __call__(self, state: IzhikevichState, x: Array) -> tuple[IzhikevichState, Array]:
+        v, u = state.v, state.u
+        x = x.astype(STATE_DTYPE)
+        h = self.dt / self.substeps
+        for _ in range(self.substeps):
+            dv = 0.04 * v * v + 5.0 * v + 140.0 - u + x
+            v = v + h * dv
+            # Clamp above the detection level, not below it: the dynamics up to the spike are
+            # untouched, but a runaway quadratic cannot reach inf and poison the gradient.
+            v = jnp.clip(v, -200.0, self.v_peak + 10.0)
+        u = u + self.dt * self.a * (self.b * v - u)
+
+        # v_scale converts the millivolt gap into the dimensionless input surrogates expect;
+        # without it a slope-25 surrogate sees tens of millivolts and returns no gradient.
+        s = self.surrogate((v - self.v_peak) / self.v_scale)
+        v = v + (self.c - v) * s  # v <- c where it spiked
+        u = u + self.d * s
+        return IzhikevichState(v=v, u=u), s
+
+
 __all__ = [
     "ALIF",
+    "IZHIKEVICH_PRESETS",
     "LIF",
     "STATE_DTYPE",
     "ALIFState",
+    "Izhikevich",
+    "IzhikevichState",
     "LIFState",
     "LeakyIntegrator",
     "LinearLIF",
