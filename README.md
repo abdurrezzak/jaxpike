@@ -72,6 +72,46 @@ spikes_a, state = jp.unroll(net, xs[:50])
 spikes_b, state = jp.unroll(net, xs[50:], state)  # exactly equals the unchunked run
 ```
 
+## Spiking convnets
+
+Layout is NHWC — `(time, batch, height, width, channels)` — because XLA's convolutions are
+written for channels-last and NCHW forces a transpose around every op.
+
+```python
+gain = jp.lif_gain(tau=20.0)   # see below; deep SNNs go silent without it
+
+net = jp.Sequential(
+    jp.Conv2d(2, 32, 3, key=k1, gain=gain),   # 2 channels: DVS on/off events
+    jp.LinearLIF(tau=20.0, threshold=0.2),
+    jp.Pool2d(2),
+    jp.Conv2d(32, 64, 3, key=k2, gain=gain),
+    jp.LinearLIF(tau=20.0, threshold=0.2),
+    jp.Pool2d(2),
+    jp.Flatten(),
+    jp.Dense(64 * 8 * 8, 10, key=k3, gain=gain),
+    jp.LinearLIF(tau=20.0, threshold=0.2),
+)
+```
+
+Convolution and pooling are stateless and applied per timestep, so a spiking convnet runs
+through `unroll_parallel` end to end.
+
+## Why deep SNNs go silent, and the one line that fixes it
+
+Deep spiking networks have a failure mode ANNs don't: activity decays multiplicatively with
+depth until nothing reaches the output, and a silent network has no gradient anywhere to
+recover from. Measured here, a three-layer spiking convnet with standard LeCun init:
+
+| | layer 1 | layer 2 | layer 3 |
+|---|---:|---:|---:|
+| plain LeCun init | 0.045 | **0.000** | **0.000** |
+| with `gain=lif_gain(tau)` | 0.380 | 0.327 | 0.200 |
+
+The cause is that a LIF membrane is an exponential moving average, which attenuates signal
+standard deviation by `sqrt((1-a)/(1+a))` — a factor of 6.3 at `tau=20`. Weights initialized
+for unit-variance activations therefore produce membranes six times smaller than intended,
+sitting well below threshold. `jp.lif_gain(tau)` returns exactly the compensating factor.
+
 ## Defining a neuron
 
 Any module following the state contract works. Nothing is registered, subclassed, or

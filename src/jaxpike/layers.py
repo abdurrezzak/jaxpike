@@ -21,10 +21,13 @@ class Dense(eqx.Module):
         *,
         key: PRNGKeyArray,
         use_bias: bool = True,
+        gain: float = 1.0,
     ):
         # LeCun normal: variance 1/fan_in keeps pre-activation scale stable at init, which for
-        # a spiking net is what sets the initial firing rate.
-        lim = jnp.sqrt(1.0 / in_features)
+        # a spiking net is what sets the initial firing rate. `gain` compensates for the
+        # membrane's low-pass attenuation -- see jaxpike.init.lif_gain, and use it in deep
+        # networks or they go silent.
+        lim = gain * jnp.sqrt(1.0 / in_features)
         self.weight = lim * jax.random.normal(key, (out_features, in_features))
         self.bias = jnp.zeros((out_features,)) if use_bias else None
 
