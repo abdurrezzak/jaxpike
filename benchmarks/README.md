@@ -138,3 +138,35 @@ Reset makes it nonlinear and this exact method no longer applies — that is wha
 and the DEER-style tier of the plan are for, and neither is proven yet. Reset-free PSN-style
 neurons are a real published model class, so the result is directly usable, but it is not yet
 a general LIF result and must not be reported as one.
+
+
+---
+
+## Phase 2 results — 2026-08-03, NVIDIA T4 (Modal)
+
+### 5. End-to-end network, parallel-in-time
+
+What a user actually gets, as opposed to a microbenchmark: a full feedforward SNN
+(Dense 128→512 → LinearLIF → Dense 512→512 → LinearLIF), batch 16, spike density ~35%.
+
+| T | fwd seq | fwd par | fwd speedup | train seq | train par | **train speedup** | par scratch |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 128 | 0.0029 s | 0.0006 s | 5.0× | 0.0114 s | 0.0012 s | **9.4×** | 25.8 MB |
+| 512 | 0.0102 s | 0.0010 s | 10.1× | 0.0445 s | 0.0025 s | **17.7×** | 104.6 MB |
+| 2,048 | 0.0311 s | 0.0021 s | 14.8× | 0.1365 s | 0.0079 s | **17.3×** | 489.0 MB |
+| 8,192 | 0.1213 s | 0.0070 s | 17.4× | 0.5415 s | 0.0249 s | **21.7×** | 1.9 GB |
+
+**21.7× faster training at T=8192**, on the weakest GPU available.
+
+This is much less than the 119× measured on an isolated membrane, and the gap is the honest
+part of the result: once the Dense layers are in the network they dominate the FLOP budget,
+and they were never the sequential bottleneck. Parallelizing time removes the dependency
+chain; it does not make the matmuls cheaper. 17–22× is the realistic figure to quote, and the
+119× number should never be quoted as an end-to-end speedup.
+
+**The cost, which is real: memory.** The parallel path materializes the full `[T, B, N]`
+activation tensor — 1.9 GB of scratch at T=8192, where the sequential+checkpointed path needs
+a few MB. So the two techniques currently sit at opposite ends of a tradeoff rather than
+composing, and a user with a long sequence and a small GPU still wants checkpointing. Making
+them compose (chunked parallel scan: parallel within a chunk, checkpointed across chunks) is
+the obvious next piece of work and is not yet done.

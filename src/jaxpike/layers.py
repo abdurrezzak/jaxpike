@@ -44,6 +44,11 @@ class Dense(eqx.Module):
             y = y + self.bias
         return None, y
 
+    def parallel_apply(self, state: None, xs: Array) -> tuple[None, Array]:
+        """A Dense layer is applied independently per timestep, so the time axis is just
+        another batch dimension: the whole sequence goes through in one matmul."""
+        return self(None, xs)
+
 
 class Sequential(eqx.Module):
     """Applies layers in order at each timestep, carrying each layer's state separately.
@@ -77,6 +82,28 @@ class Sequential(eqx.Module):
             s, x = layer(s, x)
             new_state.append(s)
         return tuple(new_state), x
+
+    def parallel_apply(self, state: tuple, xs: Array) -> tuple[tuple, Array]:
+        """Run every layer over the whole time axis, with no sequential dependency anywhere.
+
+        This works for a feedforward stack because nothing in it couples timesteps except the
+        neurons themselves: Dense is per-timestep, and a reset-free neuron is an associative
+        scan. Any layer lacking `parallel_apply` is named in the error rather than silently
+        falling back to sequential.
+        """
+        from .parallel import supports_parallel
+
+        new_state = []
+        for i, (layer, s) in enumerate(zip(self.layers, state, strict=True)):
+            if not supports_parallel(layer):
+                raise TypeError(
+                    f"layer {i} ({type(layer).__name__}) has no parallel_apply, so this "
+                    "network cannot run parallel-in-time. Reset-based neurons are nonlinear "
+                    "in time; swap in LinearLIF or use unroll()/unroll_checkpointed()."
+                )
+            s, xs = layer.parallel_apply(s, xs)
+            new_state.append(s)
+        return tuple(new_state), xs
 
 
 __all__ = ["Dense", "Sequential"]

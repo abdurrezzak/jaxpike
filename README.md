@@ -2,10 +2,12 @@
 
 Fast, flexible spiking neural networks in JAX.
 
-> **Status: pre-alpha.** The reference implementation and test suite are in place. The
-> performance work that justifies the project's existence has not landed yet, and no speed
-> claims are made until the benchmarks in [`benchmarks/`](benchmarks/) say so on real
-> hardware. See [PLAN.md](PLAN.md) for the roadmap.
+> **Status: pre-alpha.** The reference implementation, test suite, and the first fast path
+> are in place. Measured on an NVIDIA T4: **21.7× faster training at T=8192** for a
+> feedforward network using parallel-in-time execution, with bit-identical spike trains, and
+> **67× lower BPTT memory** via rematerialization. Both reproducible from
+> [`benchmarks/`](benchmarks/). Parallel-in-time currently requires reset-free neurons
+> (`LinearLIF`); the general reset case is not solved yet. See [PLAN.md](PLAN.md).
 
 ## Why another SNN library
 

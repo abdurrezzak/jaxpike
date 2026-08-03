@@ -44,6 +44,7 @@ def run(bench: str = "memory", args: list[str] | None = None) -> str:
     scripts = {
         "memory": ["benchmarks/memory_scaling.py", "--time"],
         "parallel": ["benchmarks/parallel_scan.py"],
+        "network": ["benchmarks/network_parallel.py"],
     }
     targets = list(scripts.values()) if bench == "all" else [scripts[bench]]
 
