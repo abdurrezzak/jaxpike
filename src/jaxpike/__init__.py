@@ -18,7 +18,16 @@ from .neurons import (
     LinearLIF,
 )
 from .parallel import unroll_parallel
-from .plasticity import STDP, STDPState, stdp_window
+from .plasticity import (
+    MARKRAM_PRESETS,
+    STDP,
+    DopamineState,
+    DopamineSTDP,
+    MarkramState,
+    STDPState,
+    TsodyksMarkram,
+    stdp_window,
+)
 from .surrogate import ATan, Boxcar, FastSigmoid, Surrogate, Triangular
 from .training import (
     accuracy,
