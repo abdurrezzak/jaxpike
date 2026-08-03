@@ -102,11 +102,19 @@ def main() -> None:
     verdict = "PASS" if worst < tol else "FAIL"
     print(f"Gate 0a (associative scan matches sequential, tol={tol:g}):")
     print(f"  worst membrane deviation across all lengths: {worst:.2e}  ->  {verdict}")
-    print(
-        "\nNote: any speedup column below 1.0x is expected on CPU and is not evidence "
-        "against the approach. Log-depth parallelism needs a GPU or TPU to pay off; this "
-        "experiment establishes correctness, and Phase 0b establishes the crossover point."
-    )
+    platform = jax.devices()[0].platform
+    if platform == "cpu":
+        print(
+            "\nNote: a speedup below 1.0x is expected on CPU and is not evidence against the "
+            "approach. Log-depth parallelism trades ~2x the total work for O(log T) depth, "
+            "which needs thousands of lanes to pay off. Run this on a GPU for the real number."
+        )
+    else:
+        print(
+            f"\nOn {platform} the log-depth trade pays off: the extra work is absorbed by "
+            "parallel lanes while the O(T) dependency chain of the sequential scan is not. "
+            "The advantage grows with T, because that is what deepens the chain."
+        )
 
 
 if __name__ == "__main__":

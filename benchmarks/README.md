@@ -88,7 +88,53 @@ accumulation-order noise, and — the measure that actually matters — the bina
 are *identical* at every length, so no threshold crossing was flipped.
 
 **The associative scan is 3–5× slower here, and that is expected.** It performs roughly 2×
-the total work in exchange for `O(log T)` depth instead of `O(T)`, which is a losing trade on
-a CPU with a handful of cores and a winning one on hardware with thousands of lanes. This
-experiment establishes correctness only. **The speedup is unproven until Phase 0b measures it
-on a GPU, and should not be claimed until then.**
+the total work in exchange for `O(log T)` depth instead of `O(T)`: a losing trade on a CPU
+with a handful of cores, a winning one on hardware with thousands of lanes. Correctness is
+what this run establishes. For the speedup, see the GPU results below.
+
+---
+
+## Phase 0b results — 2026-08-03, NVIDIA T4 (Modal), JAX 0.11.0
+
+A T4 is the weakest GPU Modal offers. Everything here should improve on an A100 or H100.
+
+### 3. Memory scaling reproduces on GPU
+
+| T | naive | checkpointed | reduction | ckpt slowdown |
+|---:|---:|---:|---:|---:|
+| 100 | 5.4 MB | 910.3 KB | 6.0× | 1.29× |
+| 500 | 26.5 MB | 1.6 MB | 16.6× | 1.00× |
+| 1,000 | 52.8 MB | 2.0 MB | 26.4× | 1.15× |
+| 2,500 | 131.9 MB | 3.5 MB | 37.2× | 1.10× |
+| 5,000 | 263.8 MB | 3.9 MB | **67.0×** | 1.09× |
+
+67.0× on GPU against 66.6× measured on CPU, which confirms `temp_size_in_bytes` is genuinely
+device-independent and that the local measurements can be trusted. Rematerialization is also
+*cheaper* on GPU than on CPU — 1.09× versus 1.4× at the long end — because the extra forward
+pass is compute the GPU has spare while the memory traffic it avoids is the actual bottleneck.
+
+### 4. Parallel-in-time, on hardware that can exploit it
+
+Reset-free membrane, batch 8, 128 neurons.
+
+| T | sequential | associative | speedup | spikes |
+|---:|---:|---:|---:|:---:|
+| 128 | 0.0018 s | 0.0004 s | 4.35× | exact match |
+| 512 | 0.0068 s | 0.0002 s | 33.62× | exact match |
+| 2,048 | 0.0255 s | 0.0003 s | 83.68× | exact match |
+| 8,192 | 0.1032 s | 0.0009 s | **119.10×** | exact match |
+
+**119× at T=8192, on the slowest GPU available, with bit-identical spike trains.** The
+sequential scan's cost grows linearly in `T` while the associative scan's is nearly flat, so
+the advantage widens with sequence length — exactly the asymptotic signature the approach
+predicts, which is stronger evidence than any single number.
+
+**This reorders the roadmap.** Parallel-in-time was listed third among Phase 2's work items,
+behind fused kernels. It is now first: a 119× algorithmic win on a T4 dwarfs the 2× the
+fused-kernel path is gated at, and it needs no Pallas, no custom VJP, and no hand-tuning.
+
+**The limit, stated plainly.** This is the *reset-free* case, where the recurrence is linear.
+Reset makes it nonlinear and this exact method no longer applies — that is what chunked scan
+and the DEER-style tier of the plan are for, and neither is proven yet. Reset-free PSN-style
+neurons are a real published model class, so the result is directly usable, but it is not yet
+a general LIF result and must not be reported as one.
