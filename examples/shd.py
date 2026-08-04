@@ -76,16 +76,49 @@ def load(split: str, root: Path, *, timesteps: int, duration: float = 1.0):
     return out, labels
 
 
-def build(hidden: int, key, *, tau: float, threshold: float):
+def build(hidden: int, key, *, tau: float, threshold: float, recurrent: bool = False):
+    """Feedforward by default; `recurrent` adds a self-connection on the hidden layer.
+
+    The recurrent variant is the architecture Cramer et al. report ~71% with, against ~48%
+    feedforward: the hidden layer's own spikes are fed back through a learned weight, giving
+    the network a memory of its recent activity that a feedforward net simply does not have.
+
+    The recurrent weight is initialised much smaller than the feedforward ones. Its output is
+    summed into the same membrane on the next step, so a gain sized for feedforward drive
+    makes the loop self-amplifying and the network saturates within a few timesteps.
+    """
     gain = jp.lif_gain(tau)
-    k1, k2, k3 = jax.random.split(key, 3)
-    return jp.Sequential(
-        jp.Dense(N_CHANNELS, hidden, key=k1, gain=gain),
-        jp.LinearLIF(tau=tau, threshold=threshold),
-        jp.Dense(hidden, hidden, key=k2, gain=gain),
-        jp.LinearLIF(tau=tau, threshold=threshold),
-        jp.Dense(hidden, N_CLASSES, key=k3, gain=gain),
-        jp.LeakyIntegrator(tau=tau),
+    k1, k2, k3, k4 = jax.random.split(key, 4)
+    if not recurrent:
+        return jp.Sequential(
+            jp.Dense(N_CHANNELS, hidden, key=k1, gain=gain),
+            jp.LinearLIF(tau=tau, threshold=threshold),
+            jp.Dense(hidden, hidden, key=k2, gain=gain),
+            jp.LinearLIF(tau=tau, threshold=threshold),
+            jp.Dense(hidden, N_CLASSES, key=k3, gain=gain),
+            jp.LeakyIntegrator(tau=tau),
+        )
+    return jp.Graph(
+        nodes={
+            "w_in": jp.Dense(N_CHANNELS, hidden, key=k1, gain=gain),
+            "h1": jp.LIF(tau=tau, threshold=threshold, reset="subtract"),
+            "w_rec": jp.Dense(hidden, hidden, key=k2, gain=0.2),
+            "w_h2": jp.Dense(hidden, hidden, key=k3, gain=gain),
+            "h2": jp.LIF(tau=tau, threshold=threshold, reset="subtract"),
+            "w_out": jp.Dense(hidden, N_CLASSES, key=k4, gain=gain),
+            "out": jp.LeakyIntegrator(tau=tau),
+        },
+        edges=[
+            ("input", "w_in"),
+            ("w_in", "h1"),
+            ("h1", "w_rec"),
+            ("w_rec", "h1"),
+            ("h1", "w_h2"),
+            ("w_h2", "h2"),
+            ("h2", "w_out"),
+            ("w_out", "out"),
+        ],
+        output="out",
     )
 
 
@@ -102,6 +135,7 @@ def main() -> None:
     ap.add_argument("--rate-weight", type=float, default=0.0)
     ap.add_argument("--data", type=Path, default=Path("data/shd"))
     ap.add_argument("--sequential", action="store_true", help="disable parallel-in-time")
+    ap.add_argument("--recurrent", action="store_true", help="recurrent hidden layer (Graph)")
     args = ap.parse_args()
 
     print(f"device: {jax.devices()[0]}")
@@ -112,8 +146,20 @@ def main() -> None:
         f"density {x_train.mean():.4f}  host size {x_train.nbytes / 2**30:.1f} GiB"
     )
 
-    runner = jp.unroll if args.sequential else jp.unroll_parallel
-    model = build(args.hidden, jax.random.key(0), tau=args.tau, threshold=args.threshold)
+    # A recurrent network has a genuine cycle in time, so parallel-in-time does not apply.
+    use_sequential = args.sequential or args.recurrent
+    runner = jp.unroll if use_sequential else jp.unroll_parallel
+    model = build(
+        args.hidden,
+        jax.random.key(0),
+        tau=args.tau,
+        threshold=args.threshold,
+        recurrent=args.recurrent,
+    )
+    print(
+        f"model: {'recurrent Graph' if args.recurrent else 'feedforward Sequential'}, "
+        f"runner: {'sequential' if use_sequential else 'parallel-in-time'}"
+    )
     optimizer = optax.adamw(args.lr)
     opt_state = optimizer.init(eqx.filter(model, eqx.is_inexact_array))
 
@@ -122,7 +168,7 @@ def main() -> None:
         logits = jp.max_membrane_logits(membrane)
         loss = jp.cross_entropy(logits, labels)
         # Hidden-layer rate regularization, off by default: enable if the net saturates.
-        if args.rate_weight:
+        if args.rate_weight and not args.recurrent:
             hidden_spikes, _ = runner(jp.Sequential(*m.layers[:2]), xs)
             loss = loss + args.rate_weight * jp.rate_penalty(hidden_spikes, args.rate_target)
         return loss, jp.accuracy(logits, labels)
