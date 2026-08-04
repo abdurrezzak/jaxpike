@@ -10,7 +10,8 @@ Fast, flexible spiking neural networks in JAX.
 > rematerialization cuts BPTT memory **67×**. Everything is reproducible from
 > [`benchmarks/`](benchmarks/) and [`examples/`](examples/), including the cases where we
 > lose. Parallel-in-time requires reset-free neurons (`LinearLIF`); the general reset case is
-> measured, unsolved, and [written up](benchmarks/README.md). See [PLAN.md](PLAN.md).
+> measured, unsolved, and [written up](benchmarks/README.md). See [PLAN.md](PLAN.md) for strategy and
+> [HANDOFF.md](HANDOFF.md) for the current engineering state.
 
 ## Why another SNN library
 
