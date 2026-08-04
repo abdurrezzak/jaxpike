@@ -1,9 +1,9 @@
 """Running a network over time.
 
-This module is the seam the whole performance plan hangs on. `unroll` is the sequential
-reference: one `lax.scan` step per timestep, membrane state materialized for every step so
-BPTT can reach it, costing O(T*B*N) memory. Phase 2 adds fused-kernel and parallel-in-time
-backends behind this same signature, so user code does not change when the fast paths land.
+`unroll` is the sequential reference: one `lax.scan` step per timestep, membrane state
+materialized for every step so BPTT can reach it, costing O(T*B*N) memory.
+`unroll_checkpointed` trades recomputation for memory, and `jaxpike.parallel.unroll_parallel`
+solves the time axis at once for reset-free models. All three share this signature.
 """
 
 from __future__ import annotations
@@ -30,12 +30,10 @@ def unroll(net, xs: Float[Array, "T *rest"], state=None) -> tuple[Array, object]
 
 
 def _best_chunk(t: int) -> int:
-    """The divisor of `t` closest to sqrt(t).
+    """The divisor of `t` closest to sqrt(t), where two-level checkpointing is cheapest.
 
-    Two-level checkpointing costs O(n_chunks * state + chunk * residuals), which is minimized
-    at chunk = sqrt(T). We restrict to exact divisors rather than padding: padded timesteps
-    would still advance the recurrence, silently corrupting the returned final state, and a
-    wrong state is far worse than a slightly suboptimal chunk size.
+    Exact divisors only, rather than padding: padded timesteps would still advance the
+    recurrence and silently corrupt the returned final state.
     """
     target = max(1, round(t**0.5))
     divisors = [d for d in range(1, t + 1) if t % d == 0]
@@ -50,9 +48,6 @@ def unroll_checkpointed(
     Identical results to `unroll`, but the backward pass re-runs each chunk's forward instead
     of keeping every timestep's residuals live, taking peak scratch memory from O(T*B*N) to
     roughly O(sqrt(T)*B*N) at the cost of one extra forward pass.
-
-    This is the pure-JAX way to get the memory win, and it exists partly to keep the Phase 2
-    kernel work honest: a fused Pallas kernel has to beat *this*, not the naive scan.
     """
     t = xs.shape[0]
     if state is None:
@@ -81,11 +76,7 @@ def spike_count(spikes: Float[Array, "T *rest"]) -> Array:
 
 
 def density(spikes: Array) -> Array:
-    """Fraction of (timestep, neuron) slots that carried a spike.
-
-    Reported by the benchmarks because it decides whether the Phase 2 sparse path can win:
-    below roughly 10% density, gather-and-accumulate beats a dense matmul.
-    """
+    """Fraction of (timestep, neuron) slots that carried a spike."""
     return jnp.mean(spikes != 0)
 
 

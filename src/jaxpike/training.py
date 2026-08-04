@@ -1,20 +1,17 @@
 """Losses, readouts, and a training step.
 
-The one genuinely SNN-specific decision here is the **readout**: a spiking network emits a
-binary train over time, and something has to turn that into class logits. Two options, both
-provided, because the choice materially changes trainability:
+The SNN-specific decision here is the **readout**: a spiking network emits a binary train over
+time, and something has to turn that into class logits. Both options are provided because the
+choice materially changes trainability:
 
-- `count_logits` sums spikes per class. Interpretable, and what the accuracy metric ultimately
-  reflects, but the gradient reaching it is the surrogate's, once per spike.
-- `max_membrane_logits` takes the peak membrane potential instead. It reads the *continuous*
-  state before thresholding, so gradients flow even from units that never fired — which is
-  exactly the case where a spike-count readout gives no signal at all. This is usually the
-  better training target, and it is why the readout layer is normally left non-spiking.
+- `count_logits` sums spikes per class. Interpretable, but the only gradient reaching it is
+  the surrogate's, once per spike.
+- `max_membrane_logits` takes the peak membrane potential, reading the *continuous* state
+  before thresholding, so gradients flow even from units that never fired. Usually the better
+  training target, and why the readout layer is normally left non-spiking.
 
-A third choice, and the reason the API takes logits rather than a network: regularizing the
-firing rate. Unconstrained SNNs drift toward firing at every timestep (which wastes the
-sparsity that makes them interesting) or toward silence (which kills the gradient), so
-`rate_penalty` pulls the mean rate toward a target.
+`rate_penalty` covers the third choice: unconstrained SNNs drift toward firing at every
+timestep or toward silence, and it pulls the mean rate back toward a target.
 """
 
 from __future__ import annotations
@@ -79,10 +76,9 @@ def make_step(loss_fn, optimizer: optax.GradientTransformation):
 def iterate_batches(inputs, labels, batch_size: int, *, key, shuffle: bool = True):
     """Yield `(xs, ys)` batches. Inputs are `(N, T, ...)`; xs comes out time-major `(T, B, ...)`.
 
-    **Keep `inputs` as a host (numpy) array.** Only the current batch is moved to the device.
-    Passing a device array instead pins the whole dataset in accelerator memory, which for a
-    long-sequence spiking dataset is enormous: SHD at 1000 timesteps is 8156 x 1000 x 700
-    float32 = 22.8 GB, more than most GPUs have, before the model allocates anything at all.
+    **Keep `inputs` as a host (numpy) array.** Only the current batch is moved to the device;
+    passing a device array pins the whole dataset in accelerator memory, which for a
+    long-sequence spiking dataset is enormous (SHD at 1000 timesteps is 22.8 GB in float32).
 
     The trailing partial batch is dropped, which keeps every compiled step the same shape and
     avoids a recompile on the last batch of every epoch.
@@ -91,9 +87,8 @@ def iterate_batches(inputs, labels, batch_size: int, *, key, shuffle: bool = Tru
     order = np.asarray(jax.random.permutation(key, n)) if shuffle else np.arange(n)
     for start in range(0, n - batch_size + 1, batch_size):
         idx = order[start : start + batch_size]
-        # Time-major on the host, then a single transfer of just this batch. Integer spike
-        # data is transferred in its narrow dtype and widened on the device, which cuts PCIe
-        # traffic 4x versus converting to float32 first.
+        # Integer spike data is transferred in its narrow dtype and widened on the device,
+        # which cuts PCIe traffic 4x versus converting to float32 on the host first.
         batch = np.swapaxes(inputs[idx], 0, 1)
         xs = jnp.asarray(batch)
         if not jnp.issubdtype(xs.dtype, jnp.floating):

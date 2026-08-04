@@ -1,0 +1,57 @@
+/**
+ * Global styles. Infima is bundled by the classic template.
+ *
+ * The palette matches jaxpike.viz: one blue hue stepped light-to-dark, so figures rendered by
+ * examples/gallery.py sit in the same colour system as the site around them.
+ */
+
+:root {
+  --ifm-color-primary: #2a78d6;
+  --ifm-color-primary-dark: #256abf;
+  --ifm-color-primary-darker: #1c5cab;
+  --ifm-color-primary-darkest: #184f95;
+  --ifm-color-primary-light: #3987e5;
+  --ifm-color-primary-lighter: #5598e7;
+  --ifm-color-primary-lightest: #6da7ec;
+  --ifm-code-font-size: 92%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #86b6ef;
+  --ifm-color-primary-dark: #6da7ec;
+  --ifm-color-primary-darker: #5598e7;
+  --ifm-color-primary-darkest: #3987e5;
+  --ifm-color-primary-lighter: #9ec5f4;
+  --ifm-color-primary-lightest: #b7d3f6;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* Figures are rendered in both modes by examples/gallery.py; show the matching one. */
+.figure-dark {
+  display: none;
+}
+
+[data-theme='dark'] .figure-light {
+  display: none;
+}
+
+[data-theme='dark'] .figure-dark {
+  display: block;
+}
+
+.markdown img {
+  border-radius: var(--ifm-global-radius);
+  max-width: 100%;
+}
+
+/* Tables in these docs are mostly measurements; keep the numbers readable. */
+.markdown table {
+  display: table;
+  width: 100%;
+}
+
+.markdown table td,
+.markdown table th {
+  vertical-align: top;
+}

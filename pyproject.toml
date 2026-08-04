@@ -49,19 +49,21 @@ bench = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/refe-fb/jaxpike"
-Documentation = "https://github.com/refe-fb/jaxpike#readme"
+Homepage = "https://github.com/abdurrezzak/jaxpike"
+Documentation = "https://github.com/abdurrezzak/jaxpike#readme"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jaxpike"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-q --strict-markers"
+testpaths = ["tests", "src"]
+addopts = "-q --strict-markers --doctest-modules"
 
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+# Snippets in the docs site are aligned for reading, not for the formatter.
+extend-exclude = ["website"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "NPY", "RUF"]

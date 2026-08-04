@@ -2,17 +2,14 @@
 
 Sequential unrolling is O(T) deep: timestep t cannot start until t-1 finishes, so a GPU with
 thousands of idle lanes waits on a dependency chain. When a neuron's recurrence is *linear*
-the chain can be collapsed to O(log T) with an associative scan, which measured 119x faster
-than sequential at T=8192 on a T4 (see benchmarks/README.md).
+the chain collapses to O(log T) with an associative scan.
 
-The requirement is linearity, and reset is what breaks it: a spike feeds back into the state,
-so the recurrence stops being an affine map. Neurons that opt in publish their coefficients
-via `recurrence()`; everything else raises rather than silently falling back, because a
-silent fallback to O(T) would turn a 119x speedup into a performance mystery.
+Reset is what breaks linearity: a spike feeds back into the state, so the recurrence stops
+being an affine map. Layers opt in by implementing `parallel_apply`; everything else raises
+rather than silently falling back to the O(T) path.
 
-A feedforward network parallelizes end to end: `Dense` is applied independently at each
-timestep, so it can process the whole time axis in one matmul, and the neuron layers use the
-scan. Nothing in a feedforward stack forces sequential execution.
+A feedforward network parallelizes end to end. Stateless layers such as `Dense` fold the time
+axis into the batch, and reset-free neurons use the scan.
 """
 
 from __future__ import annotations

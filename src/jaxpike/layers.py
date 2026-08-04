@@ -23,10 +23,8 @@ class Dense(eqx.Module):
         use_bias: bool = True,
         gain: float = 1.0,
     ):
-        # LeCun normal: variance 1/fan_in keeps pre-activation scale stable at init, which for
-        # a spiking net is what sets the initial firing rate. `gain` compensates for the
-        # membrane's low-pass attenuation -- see jaxpike.init.lif_gain, and use it in deep
-        # networks or they go silent.
+        # LeCun normal. In a spiking net the initial activation scale sets the initial firing
+        # rate, so pass gain=jaxpike.lif_gain(tau) in deep networks or they go silent.
         lim = gain * jnp.sqrt(1.0 / in_features)
         self.weight = lim * jax.random.normal(key, (out_features, in_features))
         self.bias = jnp.zeros((out_features,)) if use_bias else None
@@ -48,17 +46,15 @@ class Dense(eqx.Module):
         return None, y
 
     def parallel_apply(self, state: None, xs: Array) -> tuple[None, Array]:
-        """A Dense layer is applied independently per timestep, so the time axis is just
-        another batch dimension: the whole sequence goes through in one matmul."""
+        """Applied per timestep, so the time axis is just another batch dimension."""
         return self(None, xs)
 
 
 class Sequential(eqx.Module):
     """Applies layers in order at each timestep, carrying each layer's state separately.
 
-    State is a tuple parallel to `layers`, with `None` for stateless ones. Keeping it as a
-    tuple rather than a flat array is what lets `lax.scan` carry heterogeneous neuron states
-    (LIF's one variable, ALIF's two) without special-casing.
+    State is a tuple parallel to `layers`, with `None` for stateless ones, which lets
+    `lax.scan` carry heterogeneous neuron states (LIF's one variable, ALIF's two).
     """
 
     layers: tuple
@@ -89,10 +85,8 @@ class Sequential(eqx.Module):
     def parallel_apply(self, state: tuple, xs: Array) -> tuple[tuple, Array]:
         """Run every layer over the whole time axis, with no sequential dependency anywhere.
 
-        This works for a feedforward stack because nothing in it couples timesteps except the
-        neurons themselves: Dense is per-timestep, and a reset-free neuron is an associative
-        scan. Any layer lacking `parallel_apply` is named in the error rather than silently
-        falling back to sequential.
+        Any layer lacking `parallel_apply` is named in the error rather than silently falling
+        back to sequential.
         """
         from .parallel import supports_parallel
 

@@ -5,13 +5,12 @@ obtained from autodiff rather than being written out by hand. `__call__` returns
 binary spike in the forward pass and the relaxation's derivative in the backward pass, via
 the straight-through identity ``soft + stop_gradient(hard - soft)``.
 
-Two consequences worth knowing. Defining a new surrogate means writing one smooth function
-and nothing else -- no custom VJP, no chance of the forward and backward disagreeing. And
-because the derivative is autodiff-consistent with `relaxation`, it can be finite-difference
-checked, which a hand-written surrogate derivative cannot be.
+Defining a new surrogate therefore means writing one smooth function and nothing else: no
+custom VJP, no chance of forward and backward disagreeing, and a derivative that can be
+finite-difference checked.
 
 The cost is that the forward pass evaluates the relaxation even though its value is
-discarded. That is a few elementwise ops, and the Phase 2 fused kernels drop it entirely.
+discarded, which is a few elementwise ops.
 """
 
 from __future__ import annotations

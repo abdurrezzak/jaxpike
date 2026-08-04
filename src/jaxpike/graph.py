@@ -21,17 +21,15 @@ back to itself, and does not ask whether the result is sensible.
 
 Two rules make that well-defined, and they are the only two:
 
-**A node with several incoming edges sums them.** That is what a biological neuron does with
-its inputs, and it makes fan-in, skip connections and residual paths work without special
-syntax. All incoming edges must agree in shape.
+**A node with several incoming edges sums them**, which makes fan-in, skip connections and
+residual paths work without special syntax. All incoming edges must agree in shape.
 
-**An edge that closes a cycle reads the previous timestep.** A cycle cannot be resolved
-within one step without an infinite regress, so `Graph` finds the back-edges, evaluates
-everything else in topological order, and feeds cycles from a one-step buffer. This is what
-makes a recurrent SNN a recurrent SNN, and it is exactly how an RNN is defined.
+**An edge that closes a cycle reads the previous timestep.** A cycle cannot be resolved within
+one step, so `Graph` finds the back-edges, evaluates everything else in topological order, and
+feeds cycles from a one-step buffer -- exactly how an RNN is defined.
 
-Because recurrence is a genuine cycle in time, a `Graph` containing one cannot run
-parallel-in-time and will say so rather than silently producing something else.
+A `Graph` containing a cycle cannot run parallel-in-time and raises rather than silently
+producing something else.
 """
 
 from __future__ import annotations
@@ -63,8 +61,7 @@ def _validate(nodes: dict[str, Any], edges, output: str) -> None:
             raise ValueError(f"edge ({src!r}, {dst!r}) has unknown target {dst!r}")
     if not any(src == INPUT for src, _ in edges):
         raise ValueError(f"no edge from {INPUT!r}: the network is never fed anything")
-    # Every node must receive something. A node with only outgoing edges has nothing to
-    # compute from and would fail at the first timestep rather than at construction.
+    # A node with only outgoing edges would fail at the first timestep rather than here.
     fed = {dst for _, dst in edges}
     starved = sorted(set(nodes) - fed)
     if starved:
@@ -77,9 +74,8 @@ def _validate(nodes: dict[str, Any], edges, output: str) -> None:
 def _back_edges(nodes, edges) -> set[tuple[str, str]]:
     """Edges that close a cycle, found by depth-first search.
 
-    These are the edges that must be delayed by one timestep. Which edges get picked depends
-    on traversal order, but any valid choice breaks the same cycles, and the resulting network
-    is the same recurrent system.
+    These are the edges delayed by one timestep. Which edges get picked depends on traversal
+    order, but any valid choice breaks the same cycles.
     """
     successors: dict[str, list[str]] = {name: [] for name in [INPUT, *nodes]}
     for src, dst in edges:
@@ -107,9 +103,8 @@ def _back_edges(nodes, edges) -> set[tuple[str, str]]:
 def _topological_order(nodes, edges, back: set[tuple[str, str]]) -> list[str]:
     forward = [(s, d) for s, d in edges if (s, d) not in back]
 
-    # Every node must be reachable from the input along forward edges. A subgraph connected
-    # only through its own cycle is orderable but can never receive a value, and catching it
-    # here beats failing later during shape inference.
+    # A subgraph connected only through its own cycle is orderable but can never receive a
+    # value, so require reachability from the input along forward edges.
     reachable, frontier = {INPUT}, [INPUT]
     while frontier:
         current = frontier.pop()
@@ -202,8 +197,7 @@ class Graph(eqx.Module):
             )
             for name in self.order
         }
-        # Only sources of feedback edges need a buffer, and it starts at zero -- the network
-        # has not run yet, so there is nothing for the cycle to have carried in.
+        # Only sources of feedback edges need a buffer, and it starts at zero.
         feedback = {src: jnp.zeros(shapes[src], dtype=jnp.float32) for src, _ in self.back}
         return GraphState(nodes=node_states, feedback=feedback)
 

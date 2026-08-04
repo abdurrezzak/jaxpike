@@ -1,18 +1,12 @@
 """Convolutional and pooling layers.
 
-Spiking vision is where most of the field's work happens (NMNIST, DVS Gesture, CIFAR10-DVS),
-so a library without convolution is a library nobody can benchmark.
-
 **Layout is NHWC**, i.e. `(time, batch, height, width, channels)`. PyTorch users will expect
 NCHW, but XLA's convolutions are written for channels-last and NCHW forces layout transposes
-around every op on GPU and TPU. Since porting a model means rewriting the layer construction
-anyway, we take the faster layout and document it rather than pay a permanent tax for
-familiarity.
+around every op on GPU and TPU.
 
 Every layer here is stateless and applied independently at each timestep, so all of them
 parallelize over time for free: fold the time axis into the batch, run one big convolution,
-unfold. That is what lets a spiking convnet built from these run through `unroll_parallel`
-end to end.
+unfold.
 """
 
 from __future__ import annotations
@@ -76,9 +70,7 @@ class Conv2d(_TimeFolded):
         kh, kw = _pair(kernel_size)
         if padding not in ("SAME", "VALID"):
             raise ValueError(f"padding must be 'SAME' or 'VALID', got {padding!r}")
-        # LeCun normal over the true fan-in. Getting this right matters more in an SNN than
-        # an ANN: initial activation scale sets the initial firing rate, and a net that starts
-        # silent has no gradient at all to recover from.
+        # LeCun normal over the true fan-in; see Dense for why `gain` matters in a spiking net.
         fan_in = kh * kw * in_channels
         self.weight = (
             gain

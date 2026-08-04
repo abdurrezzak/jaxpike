@@ -4,33 +4,29 @@ NIR is the field's interchange format — ONNX for spiking networks. Exporting t
 model trained here run in snnTorch, Norse, Spyx, Lava, Rockpool or Nengo, and deploy to Intel
 Loihi, SpiNNaker2, BrainScaleS-2, SynSense Speck or Xylo. Requires ``pip install nir``.
 
-**What NIR does and does not capture.** It standardizes *what a model computes* — the
-primitives and their parameters — not how it is executed. So `unroll_parallel`, the fused
-paths, and rematerialization have no representation here and need none: they are execution
-strategies over a graph NIR already describes. What NIR cannot express is a *model* it has no
-primitive for, and that is where exports fail rather than silently distort.
+NIR standardizes *what a model computes* -- the primitives and their parameters -- not how it
+is executed, so execution strategies such as `unroll_parallel` need no representation here.
+A model NIR has no primitive for is where export fails, and it fails loudly.
 
-Two semantic gaps are worth knowing before relying on a round trip:
+Three semantic gaps to know before relying on a round trip:
 
-**Subtract reset has no NIR equivalent.** NIR's LIF resets the membrane to a fixed value
-``v_reset``. Our default `reset="subtract"` removes exactly one threshold and keeps the
-overshoot, which is a genuinely different model, so exporting it raises rather than quietly
-substituting reset-to-zero and changing the model's behaviour.
+**Subtract reset has no NIR equivalent.** NIR's LIF resets the membrane to a fixed ``v_reset``,
+while the default `reset="subtract"` removes one threshold and keeps the overshoot. Exporting
+it raises rather than quietly substituting reset-to-zero.
 
 **NIR specifies a differential equation, not a discretization.** Its LIF is
-``tau*dv/dt = (v_leak - v) + R*I``; how an importing framework steps that is up to it. We use
-the exact exponential solution, Norse uses forward Euler, and the two differ by O(dt/tau).
-A NIR round trip therefore preserves the *model*, not bit-identical spike trains, once
-another framework is involved.
+``tau*dv/dt = (v_leak - v) + R*I``; how an importing framework steps that is up to it. jaxpike
+uses the exact exponential solution and Norse uses forward Euler, differing by O(dt/tau), so a
+round trip preserves the *model* rather than bit-identical spike trains.
 
-**Units are not standardized by NIR, and this bites.** NIR stores `tau` in seconds; our
-neurons store it in units of `dt`. Export therefore takes a `dt_seconds` argument declaring
-what one of your timesteps physically means, and getting it wrong rescales every time
-constant in the model. Verified interop notes as of nir 1.0.8: snnTorch reads our graphs, but
-its importer assumes `dt = 1e-4 s` regardless of what the file says, and has no mapping for
-the `LI` node at all — so a `LeakyIntegrator` readout will not cross into snnTorch. Round
-trips within jaxpike are exact; anything leaving the library should be checked numerically on
-the other side rather than assumed.
+**Units are not standardized.** NIR stores `tau` in seconds; these neurons store it in units
+of `dt`, so export takes a `dt_seconds` argument declaring what one timestep physically means.
+Getting it wrong rescales every time constant in the model.
+
+Interop notes as of nir 1.0.8: snnTorch reads these graphs but its importer assumes
+`dt = 1e-4 s` regardless of the file, and has no mapping for the `LI` node, so a
+`LeakyIntegrator` readout will not cross into it. Round trips within jaxpike are exact;
+anything leaving the library should be checked numerically on the other side.
 """
 
 from __future__ import annotations
@@ -114,7 +110,7 @@ def _export_layer(
         return [(name, node)], layer.out_shape(shape)
 
     if isinstance(layer, Conv2d):
-        # Ours is HWIO (kh, kw, in, out); NIR wants OIHW (out, in, kh, kw).
+        # HWIO (kh, kw, in, out) here; NIR wants OIHW (out, in, kh, kw).
         weight = np.transpose(np.asarray(layer.weight), (3, 2, 0, 1))
         bias = (
             np.zeros(weight.shape[0], np.float32) if layer.bias is None else np.asarray(layer.bias)
@@ -162,8 +158,7 @@ def _export_layer(
         return [(name, node)], layer.out_shape(shape)
 
     if isinstance(layer, LinearLIF):
-        # Reset-free: a leaky integrator feeding a bare threshold. NIR has no single node for
-        # this, but the two-node form is exact rather than an approximation.
+        # NIR has no reset-free spiking primitive; LI feeding a Threshold is exact.
         li = nir.LI(
             tau=_broadcast(jnp.exp(layer.log_tau) * dt_seconds, units),
             r=_broadcast(1.0, units),

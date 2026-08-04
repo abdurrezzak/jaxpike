@@ -1,0 +1,108 @@
+/**
+ * CSS files with the .module.css suffix are treated as CSS modules and scoped locally.
+ */
+
+.heroBanner {
+  padding: 5rem 0 3rem;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  background: var(--ifm-background-surface-color);
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+}
+
+.heroBanner :global(.hero__subtitle) {
+  color: var(--ifm-color-emphasis-700);
+  max-width: 40rem;
+  margin: 0 auto 2rem;
+}
+
+@media screen and (max-width: 996px) {
+  .heroBanner {
+    padding: 3rem 1rem 2rem;
+  }
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.results {
+  padding: 3rem 0 1rem;
+}
+
+.resultCard {
+  display: block;
+  height: 100%;
+  padding: 1.25rem;
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: var(--ifm-global-radius);
+  color: inherit;
+  transition: border-color 200ms ease;
+}
+
+.resultCard:hover {
+  border-color: var(--ifm-color-primary);
+  text-decoration: none;
+  color: inherit;
+}
+
+.resultValue {
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--ifm-color-primary);
+}
+
+.resultLabel {
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.resultDetail {
+  font-size: 0.875rem;
+  color: var(--ifm-color-emphasis-700);
+  margin: 0;
+}
+
+.footnote {
+  margin-top: 1.5rem;
+  font-size: 0.875rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.overview {
+  padding: 2rem 0 3rem;
+}
+
+.overview p {
+  color: var(--ifm-color-emphasis-800);
+}
+
+.paths {
+  padding: 0 0 4rem;
+}
+
+.pathCard {
+  height: 100%;
+  padding: 1.25rem;
+  border-left: 3px solid var(--ifm-color-primary);
+  background: var(--ifm-background-surface-color);
+  border-radius: 0 var(--ifm-global-radius) var(--ifm-global-radius) 0;
+}
+
+.pathCard p {
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.9375rem;
+}
+
+@media screen and (max-width: 996px) {
+  .resultCard,
+  .pathCard {
+    margin-bottom: 1rem;
+  }
+}

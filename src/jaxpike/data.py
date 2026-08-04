@@ -4,15 +4,14 @@ Spiking datasets ship as event lists — `(timestamp, unit)` pairs — rather th
 every framework re-implements the same binning code to turn them into something a network can
 consume. This module does it once. Needs `h5py` (``pip install "jaxpike[data]"``).
 
-Two decisions are baked in, both of which matter more than they look:
+Two decisions are baked in:
 
 **Arrays stay on the host.** A long-sequence spiking dataset is enormous when densified: SHD
 at 1000 timesteps is 8156 by 1000 by 700, which is 22.8 GB in float32 and will not fit on most
 accelerators alongside a model. `jaxpike.iterate_batches` moves one batch at a time.
 
 **Spikes are stored as uint8, not float32.** They are binary, so float32 wastes four times the
-memory and, more importantly, four times the host-to-device bandwidth every batch. On a
-long-sequence run that is the difference between being compute-bound and transfer-bound.
+memory and four times the host-to-device bandwidth every batch.
 """
 
 from __future__ import annotations
@@ -78,8 +77,8 @@ def bin_events(times, units, labels, *, timesteps: int, n_units: int, duration: 
     """Densify event lists onto a fixed `timesteps` grid.
 
     Multiple events landing in the same bin are collapsed to a single spike rather than
-    accumulated: a count above one is an artifact of the chosen resolution, not something the
-    recording actually distinguishes, and the neurons take binary input.
+    accumulated: a count above one is an artifact of the chosen resolution, and the neurons
+    take binary input.
     """
     out = np.zeros((len(labels), timesteps, n_units), dtype=np.uint8)
     for index, (event_times, event_units) in enumerate(zip(times, units, strict=True)):

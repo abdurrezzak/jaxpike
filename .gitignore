@@ -14,6 +14,11 @@ coverage.xml
 .DS_Store
 .idea/
 .vscode/
+# docs site
+node_modules/
+website/build/
+website/.docusaurus/
+
 # benchmark artifacts: results are committed deliberately, raw traces are not
 benchmarks/results/raw/
 *.jsonl.gz

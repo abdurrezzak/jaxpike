@@ -17,46 +17,28 @@ The factorization, for a weight from presynaptic unit `i` to postsynaptic unit `
     learning signal:  L_j[t] = dLoss / ds_j[t]        (spatial only, no time)
     gradient:         dLoss/dW_ji = sum_t  L_j[t] * psi_j[t] * e_i[t]
 
-where `psi` is the surrogate derivative. Note what the trace is: the presynaptic spike train
-low-pass filtered by exactly the membrane's own time constant. That is not a coincidence or an
-approximation — it is the membrane's impulse response, which is why the factorization works.
+where `psi` is the surrogate derivative. The trace is the presynaptic spike train low-pass
+filtered by the membrane's own time constant -- its impulse response, which is why the
+factorization works.
 
-**How close this is to the BPTT gradient**, measured rather than asserted (cosine similarity
-of the weight gradients, 2-layer net, 40 timesteps):
+The gradient is approximate, with two separate sources worth keeping apart:
 
-| | reset-free (`LinearLIF`) | with reset (`LIF`) |
-|---|---:|---:|
-| layer feeding the loss directly | **1.000000** (exact, 2e-07) | 0.9988 |
-| hidden layer | 0.879 | 0.917 |
+*Reset.* A spike feeds back into its own membrane, a temporal path the factorization does not
+carry. Without reset the membrane filter is the only route through time and the gradient is
+exact to float precision (cosine 1.000000 against BPTT, versus 0.9988 with reset).
 
-Two separate sources of approximation, worth keeping apart:
+*Depth.* For a hidden layer the learning signal has to arrive from above, and doing that
+exactly means filtering the downstream gradient backwards through each membrane -- a backward
+pass in time, the thing online learning exists to avoid. It is propagated spatially only, the
+standard symmetric-feedback approximation, giving a well-aligned descent direction (cosine
+~0.9) rather than the true gradient.
 
-*Reset.* A spike feeds back into its own membrane, a temporal path e-prop's factorization does
-not carry. Without reset the membrane filter is the only route through time and the gradient
-is exact to float precision.
+Recurrent connections are dropped for the same reason as reset, so a recurrent `Graph` is
+refused rather than silently mis-differentiated.
 
-*Depth.* For a hidden layer the learning signal has to arrive from above. Doing that properly
-means filtering the downstream gradient backwards through each membrane — a backward pass in
-time, which is the thing online learning exists to avoid. So the signal is propagated
-spatially only, the standard symmetric-feedback approximation, and the result is a
-well-aligned descent direction rather than the true gradient. Cosine similarity near 0.9 is
-what makes it work as a learning rule despite not being exact.
-
-Recurrent connections are dropped for the same reason as reset, which is why a recurrent
-`Graph` is refused rather than silently mis-differentiated.
-
-**The memory guarantee, measured** (peak scratch bytes for one gradient, 2-layer net):
-
-| T | BPTT | e-prop | ratio |
-|---:|---:|---:|---:|
-| 100 | 210,984 | 3,128 | 68x |
-| 1,000 | 2,090,024 | 3,128 | 668x |
-| 4,000 | 8,354,024 | 3,128 | **2671x** |
-
-Flat in `T`, exactly as claimed — the traces are carried in the scan carry and the weight
-gradient is accumulated in place, so nothing per-timestep is ever stored. Getting this right
-is what forces the per-timestep loss signature: accumulating inside the scan is only possible
-if the loss decomposes over time.
+Memory is flat in `T`: traces ride in the scan carry and the weight gradient is accumulated in
+place, so nothing per-timestep is ever stored. That is what forces the per-timestep loss
+signature, since accumulating inside the scan requires a loss that decomposes over time.
 
 Scope: `Sequential` stacks of alternating connection and spiking layers, which is what the
 derivation covers. Anything else raises rather than silently returning a wrong gradient.
@@ -128,10 +110,9 @@ def eprop_grads(net: Sequential, xs, step_loss):
     """Gradient of ``sum_t step_loss(output[t])`` w.r.t. `net`, computed forward in time.
 
     `step_loss` takes **one timestep** of readout, shaped `(batch, units)`, and returns a
-    scalar. That signature is the price of the memory guarantee: the weight gradient is
-    accumulated inside the scan, so nothing per-timestep is ever stored, and that is only
-    possible if the loss decomposes over time. A loss that reduces across time first — a
-    max-over-time readout, for example — cannot be trained this way and needs BPTT.
+    scalar. That signature is the price of the memory guarantee. A loss that reduces across
+    time first -- a max-over-time readout, for example -- cannot be trained this way and needs
+    BPTT.
 
     Returns `(grads, loss)` with `grads` shaped like `net`.
     """
@@ -162,9 +143,8 @@ def eprop_grads(net: Sequential, xs, step_loss):
             trace = alpha * traces[slot] + (1.0 - alpha) * value
             _, current = connection(None, value)
             previous = net_state[index + 1]
-            # The membrane *before* reset is what met the threshold, so it is where the
-            # surrogate derivative belongs. A neuron returns its post-reset state, so this is
-            # recomputed rather than read back.
+            # The pre-reset membrane is what met the threshold, so the surrogate derivative
+            # belongs there. Neurons return post-reset state, hence the recompute.
             pre_reset = alpha * previous.v + (1.0 - alpha) * current
             neuron_state, spikes = neuron(previous, current)
             new_state[index + 1] = neuron_state

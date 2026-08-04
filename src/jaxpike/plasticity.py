@@ -6,17 +6,14 @@ STDP is a different animal entirely and it is worth being clear about the differ
 using it.
 
 STDP is **local and unsupervised**. A synapse changes strength based only on the relative
-timing of the spikes at its two ends: if the presynaptic neuron fires shortly *before* the
-postsynaptic one, the synapse strengthens; if shortly *after*, it weakens. No loss function,
-no gradients, no backward pass, and no information from anywhere else in the network. That
-locality is why neuromorphic chips can implement it in hardware and why it is the standard
-model of biological learning.
+timing of the spikes at its two ends: pre shortly before post strengthens it, the reverse
+weakens it. No loss function, no gradients, no backward pass. That locality is why
+neuromorphic chips can implement it in hardware.
 
-The trade is real: STDP has no notion of a task. It extracts correlation structure from
-input statistics, which is useful for unsupervised feature learning and as a biologically
-plausible mechanism to study, but on its own it will not train a classifier the way BPTT
-will. The usual practical recipes are STDP-pretraining followed by a supervised readout, or
-a three-factor rule where a reward signal gates the update.
+The trade is real: STDP has no notion of a task. It extracts correlation structure from input
+statistics, but on its own it will not train a classifier the way BPTT will. The usual recipes
+are STDP-pretraining followed by a supervised readout, or a three-factor rule where a reward
+signal gates the update.
 
 The implementation is the standard pair-based rule with exponential eligibility traces:
 
@@ -52,9 +49,8 @@ class STDP(eqx.Module):
 
     Weight convention matches `Dense`: `weight[post, pre]`.
 
-    `a_minus` larger than `a_plus` is the usual choice. Symmetric rates tend to run away,
-    because a strengthened synapse makes its postsynaptic neuron fire more, which strengthens
-    it further; slight depression bias plus the `w_min`/`w_max` clamp keeps that in check.
+    `a_minus` larger than `a_plus` is the usual choice: symmetric rates run away, because a
+    strengthened synapse makes its postsynaptic neuron fire more, which strengthens it further.
     """
 
     tau_pre: float = eqx.field(static=True)
@@ -179,10 +175,8 @@ class TsodyksMarkram(eqx.Module):
 
     This is not a learning rule -- nothing here is remembered across a stimulus. It is a
     *dynamic synapse*: efficacy changes over tens to hundreds of milliseconds because vesicles
-    deplete and presynaptic calcium accumulates, then relaxes back. The consequence is that a
-    synapse transmits a spike *train* differently depending on its rate and history, which is
-    the point of the Markram et al. result that the same axon signals differently to different
-    targets.
+    deplete and presynaptic calcium accumulates, then relaxes back, so the synapse transmits a
+    spike *train* differently depending on its rate and history.
 
     Two variables per presynaptic neuron:
 
@@ -229,8 +223,8 @@ class TsodyksMarkram(eqx.Module):
 
     @property
     def decay_d(self) -> float:
-        # math, not jnp: these are static Python floats, and jnp here would create a tracer
-        # that cannot be converted back to float inside a jitted scan.
+        # math, not jnp: jnp on a static float creates a tracer that cannot be converted back
+        # to float inside a jitted scan.
         return math.exp(-self.dt / self.tau_d)
 
     @property
@@ -286,8 +280,7 @@ class DopamineSTDP(eqx.Module):
 
     Plain STDP changes a weight the moment two spikes coincide, which cannot explain learning
     from *delayed* reward: by the time a reward arrives seconds later, the responsible spike
-    pair is long gone and a million irrelevant ones have happened since. Izhikevich's answer,
-    and this is the whole idea, is to insert a slow variable between them:
+    pair is long gone. Izhikevich's answer is to insert a slow variable between them:
 
         eligibility c: STDP writes into c, not into the weight.  c decays with tau_c (~1 s).
         dopamine d:    reward raises d.                          d decays with tau_d (~200 ms).
@@ -295,9 +288,8 @@ class DopamineSTDP(eqx.Module):
 
     The weight moves only where eligibility and dopamine *overlap*. A spike pair leaves a tag
     that persists for about a second; if reward arrives inside that window the synapse is
-    reinforced, and if not the tag simply decays. Random firing during the wait does not wash
-    the tag out, because STDP's own window is only ~20 ms wide, so uncorrelated spikes
-    contribute near-zero net eligibility.
+    reinforced, otherwise the tag decays. Random firing during the wait does not wash it out,
+    because STDP's own window is only ~20 ms wide.
 
     Defaults are the paper's, in milliseconds, so use `dt=1.0`.
     """

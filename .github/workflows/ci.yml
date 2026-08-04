@@ -32,3 +32,21 @@ jobs:
       - name: Test
         # CPU only. Kernel and benchmark suites need NVIDIA/TPU and run separately.
         run: pytest --cov --cov-report=term-missing
+
+  docs:
+    name: docs site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install
+        run: npm ci
+        working-directory: website
+      # `onBrokenLinks: throw` means a build failure here is a dead cross-reference.
+      - name: Build
+        run: npm run build
+        working-directory: website

@@ -1,11 +1,7 @@
 """Reference neuron models.
 
-These are the correctness reference for the whole library: pure JAX, no kernels, no tricks.
-Phase 2's fused Pallas implementations are validated against these forever, so clarity here
-matters more than speed.
-
-Every neuron follows the same contract, which is what lets the execution engine and the
-codegen path treat them uniformly:
+Every neuron follows the same contract, which is what lets the execution engine treat them
+uniformly:
 
     init_state(input_shape) -> state pytree
     out_shape(input_shape)  -> output shape
@@ -22,9 +18,8 @@ from jaxtyping import Array, Float
 
 from .surrogate import FastSigmoid, Surrogate
 
-# Membrane state is accumulated in float32 even under bf16/fp16 training: a leaky integrator
-# runs for thousands of steps and low-precision accumulation drifts enough to change which
-# neurons cross threshold.
+# float32 even under bf16/fp16 training: a leaky integrator runs for thousands of steps, and
+# low-precision accumulation drifts enough to change which neurons cross threshold.
 STATE_DTYPE = jnp.float32
 
 
@@ -41,12 +36,10 @@ class LIF(eqx.Module):
     followed by a reset: ``subtract`` removes one threshold from the membrane (retaining the
     overshoot, so information is not discarded) while ``zero`` clamps it back to rest.
 
-    Note the ``(1 - alpha)`` on the input, which is the normalized convention: a constant
-    drive `x` drives the membrane to a steady state of exactly `x`, so inputs are expressed in
-    the same units as `threshold` and a drive below threshold provably never fires. The
-    practical consequence is that a *single* timestep injects only ``1 - alpha`` of the input
-    (about 5% at tau=20), so transient drives must be large to fire on their own. snnTorch
-    omits this factor, so weights ported from it need rescaling by ``1/(1 - alpha)``.
+    The ``(1 - alpha)`` on the input is the normalized convention: a constant drive `x` settles
+    at exactly `x`, so inputs are in the same units as `threshold`. A single timestep therefore
+    injects only ``1 - alpha`` of the input, about 5% at tau=20. snnTorch omits this factor, so
+    weights ported from it need rescaling by ``1/(1 - alpha)``.
 
     `tau` is stored as its log so it stays positive under unconstrained optimization, and it
     is a learnable leaf by default. Freeze it with `equinox.partition` if you don't want that.
@@ -112,8 +105,7 @@ class ALIF(eqx.Module):
 
     The effective threshold is ``threshold + beta*a``, where the adaptation variable `a`
     integrates the neuron's own spikes with time constant `tau_a`. This is the smallest model
-    that needs two state variables, so it is the one that proves the state contract
-    generalizes past a single membrane array.
+    needing two state variables, so it is the worked example for a multi-variable neuron.
     """
 
     log_tau: Float[Array, "..."]
@@ -169,14 +161,11 @@ class LinearLIF(eqx.Module):
         v[t] = alpha*v[t-1] + (1 - alpha)*x[t]
         s[t] = H(v[t] - threshold)
 
-    Dropping the reset is a real modelling choice with a real cost -- the neuron cannot
-    regulate its own firing, so a strongly driven unit saturates at one spike per timestep --
-    and a real payoff: the recurrence stays affine, so the whole time axis can be solved with
-    an associative scan instead of a sequential loop. That measured 119x faster than
-    sequential at T=8192 on a T4.
+    Dropping the reset costs self-regulation -- a strongly driven unit saturates at one spike
+    per timestep -- and buys an affine recurrence, so the whole time axis can be solved with an
+    associative scan instead of a sequential loop. See `jaxpike.unroll_parallel`.
 
-    This is the PSN-style neuron of the parallel spiking network literature, and it is the
-    tier-1 case for `jaxpike.unroll_parallel`.
+    This is the PSN-style neuron of the parallel spiking network literature.
     """
 
     log_tau: Float[Array, "..."]
@@ -234,10 +223,10 @@ class LeakyIntegrator(eqx.Module):
 
         v[t] = alpha*v[t-1] + (1 - alpha)*x[t]
 
-    This is the standard SNN readout layer. Classifying on spike counts means the loss only
-    sees a unit at all once it crosses threshold, so a class that never fires produces no
-    gradient and can never learn to fire. Reading the continuous membrane instead keeps every
-    output unit differentiable from the first step.
+    The standard SNN readout layer. Classifying on spike counts means the loss only sees a
+    unit once it crosses threshold, so a class that never fires produces no gradient and can
+    never learn to fire; reading the continuous membrane keeps every output unit
+    differentiable from the first step.
 
     Being linear and reset-free, it also parallelizes over time.
     """
@@ -279,9 +268,7 @@ class LeakyIntegrator(eqx.Module):
         return LIFState(v=v[-1]), v
 
 
-# Izhikevich firing-pattern presets from Izhikevich (2003), "Simple Model of Spiking Neurons".
-# The whole appeal of the model is that four numbers reproduce most of the qualitative firing
-# behaviour real cortical neurons show, so these are exposed by name.
+# Firing-pattern presets from Izhikevich (2003), "Simple Model of Spiking Neurons".
 IZHIKEVICH_PRESETS: dict[str, tuple[float, float, float, float]] = {
     #                      a      b      c     d
     "regular_spiking": (0.02, 0.20, -65.0, 8.0),
@@ -307,24 +294,21 @@ class Izhikevich(eqx.Module):
         if v >= 30 mV:  v <- c,  u <- u + d
 
     Unlike LIF this is a *spike-generating* model rather than a threshold-crossing one: the
-    quadratic term produces a genuine upstroke, and 30 mV is where the spike is detected at
-    its peak rather than a threshold in the LIF sense. That is what buys the variety --
-    bursting, chattering, adaptation, rebound -- from four parameters. Construct by name with
+    quadratic term produces a genuine upstroke, and 30 mV detects the spike at its peak rather
+    than acting as a threshold in the LIF sense. Construct by name with
     `Izhikevich.preset("chattering")`.
 
     Three practical notes, because this model is less forgiving than LIF:
 
     Voltages are in millivolts, not the dimensionless units the LIF classes use. Resting
-    potential is around -65 mV and input currents are on the order of 1-20. Weight
-    initialization tuned for LIF will do nothing here.
+    potential is around -65 mV and input currents are on the order of 1-20, so weight
+    initialization tuned for LIF does nothing useful here.
 
-    The quadratic term makes the forward Euler step unstable at dt=1: v can run away to
-    infinity within a step for large input. We sub-step (two half steps, as Izhikevich's own
-    code does) and clamp v, which keeps it finite without changing the dynamics below the
-    spike.
+    The quadratic term makes forward Euler unstable at dt=1: v can run away to infinity within
+    a step for large input. Sub-stepping (two half steps, as Izhikevich's own code does) plus a
+    clamp keeps it finite without changing the dynamics below the spike.
 
-    It is nonlinear in time, so it cannot use `unroll_parallel` -- there is no
-    `parallel_apply` here, and the error will say so.
+    It is nonlinear in time, so there is no `parallel_apply` and `unroll_parallel` will raise.
     """
 
     log_tau_unused: Float[Array, "..."]  # placeholder keeps the pytree non-empty for grads

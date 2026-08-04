@@ -3,14 +3,13 @@
 Needs matplotlib (``pip install "jaxpike[viz]"``). Every function takes an optional `ax` and
 returns the `Axes` it drew on, so plots compose into larger figures instead of owning them.
 
-The chart forms follow from what the data is doing rather than from habit. A raster is
-identity-over-time, so it is a mark per event and nothing else. A membrane trace is
-change-over-time, so it is a line with the threshold drawn as a reference rather than as a
-second series. `layer_rates` is a magnitude comparison across a handful of categories, so it
-is a bar chart — and it is the most useful function here, because it diagnoses the failure
-mode that kills deep SNNs: activity decaying layer by layer until the network is silent and
-has no gradient anywhere. Weight matrices are polarity data (excitatory versus inhibitory),
-so they get a diverging blue-red map with a neutral midpoint, never a rainbow.
+Chart forms follow from what the data is doing. A raster is identity-over-time, so it is a
+mark per event. A membrane trace is change-over-time, so it is a line with the threshold as a
+reference rather than a second series. Weight matrices are polarity data, so they get a
+diverging map with a neutral midpoint.
+
+`layer_rates_from` is the one to reach for first: it diagnoses the failure mode that kills
+deep SNNs, activity decaying layer by layer until the network is silent.
 
 Colours come from a validated palette: sequential encodings use one hue light-to-dark,
 diverging uses two poles with a gray middle, and text never wears a series colour.
@@ -189,8 +188,8 @@ def raster(
             rasterized=len(times) > 20000,
         )
     else:
-        # Two colours, not a ramp. Spikes are binary, so a sequential scale would paint every
-        # empty slot in the ramp's lightest step and "no spike" would read as "a little bit".
+        # Two colours, not a ramp: spikes are binary, and a sequential scale would make "no
+        # spike" read as "a little bit".
         from matplotlib.colors import ListedColormap
 
         ax.imshow(
@@ -269,9 +268,8 @@ def membrane(
                 zorder=3,
                 label="spike",
             )
-            # One direct label on the first marker, rather than a legend box: a legend
-            # placed inside lands on the trace, and one placed outside detaches from the
-            # panel entirely when the plot is a cell in a larger grid.
+            # Direct label rather than a legend box: inside it lands on the trace, outside it
+            # detaches from the panel when the plot is a cell in a larger grid.
             ax.annotate(
                 "spike",
                 xy=(times[0], np.max(trace)),
@@ -325,8 +323,7 @@ def layer_rates(
         bar.set_edgecolor(theme.surface)  # 2px surface gap between adjacent fills
 
     ax.axhspan(low, high, color=theme.series[0], alpha=0.07, zorder=0)
-    # Labels stay horizontal. Rotating them to fit collides with neighbouring bars and
-    # overflows the axes, and the warning is the part most worth reading.
+    # Labels stay horizontal: rotating them collides with neighbouring bars.
     headroom = max(max(values, default=0), high) * 0.035
     for index, value in enumerate(values):
         ax.text(
@@ -560,9 +557,8 @@ def architecture(
         x0, y0 = position[src]
         x1, y1 = position[dst]
         delayed = (src, dst) in back
-        # Curve anything that does not connect adjacent columns. A skip connection drawn
-        # straight passes behind the nodes it skips and becomes invisible, which makes the
-        # diagram understate the topology -- the worst failure a topology diagram can have.
+        # Curve anything that does not connect adjacent columns: a skip drawn straight passes
+        # behind the nodes it skips and becomes invisible.
         span = abs(depth[dst] - depth[src])
         if delayed:
             rad = 0.42
@@ -643,8 +639,8 @@ def architecture(
     ax.set_ylim(min(ys) - 1.0, max(ys) + 0.95)
     if title:
         ax.set_title(title, loc="left", fontsize=11, color=theme.text)
-    # Whether the network is recurrent goes in its own annotation rather than appended to the
-    # title, which reads as a duplicate whenever the caller's title already says it.
+    # Recurrence gets its own annotation rather than being appended to the title, which would
+    # duplicate whenever the caller's title already says it.
     ax.text(
         0.999,
         1.0,

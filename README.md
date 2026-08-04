@@ -40,6 +40,13 @@ project's central bet, and everything else follows from it:
 - **Interoperable.** NIR import and export, so models move between jaxpike, Norse, snnTorch,
   Loihi, SpiNNaker2 and Speck.
 
+## Documentation
+
+Full docs live in [`website/`](website/) — a Docusaurus site with a getting-started path, a
+[migration guide from snnTorch](website/docs/guides/coming-from-snntorch.md), a
+[page on why deep SNNs go silent](website/docs/guides/silent-networks.md), and API references.
+Run it with `cd website && npm install && npm start` (Node 20+).
+
 ## Install
 
 ```bash
