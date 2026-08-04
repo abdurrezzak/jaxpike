@@ -14,6 +14,13 @@ coverage.xml
 .DS_Store
 .idea/
 .vscode/
+# Internal working documents: strategy and engineering handoff notes, kept locally.
+PLAN.md
+HANDOFF.md
+
+# Datasets are downloaded on demand by jaxpike.data, never versioned.
+data/
+
 # docs site
 node_modules/
 website/build/

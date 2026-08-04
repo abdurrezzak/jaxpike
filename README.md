@@ -8,10 +8,9 @@ Fast, flexible spiking neural networks in JAX.
 > split, not on test). Parallel-in-time execution makes training **~2.5× faster end to end**
 > (17–21× on the isolated forward/backward pass) with bit-identical spike trains, and
 > rematerialization cuts BPTT memory **67×**. Everything is reproducible from
-> [`benchmarks/`](benchmarks/) and [`examples/`](examples/), including the cases where we
-> lose. Parallel-in-time requires reset-free neurons (`LinearLIF`); the general reset case is
-> measured, unsolved, and [written up](benchmarks/README.md). See [PLAN.md](PLAN.md) for strategy and
-> [HANDOFF.md](HANDOFF.md) for the current engineering state.
+> [`benchmarks/`](benchmarks/) and [`examples/`](examples/), including the unfavourable
+> results. Parallel-in-time requires reset-free neurons (`LinearLIF`); the general reset case
+> is measured, unsolved, and [written up](benchmarks/README.md).
 
 ## Why another SNN library
 
@@ -259,7 +258,7 @@ uv venv && uv pip install -e ".[dev]"
 ```
 
 Kernel and benchmark work requires NVIDIA or TPU hardware — JAX's Metal backend cannot run
-Pallas, so those are remote-only. See §3 of [PLAN.md](PLAN.md).
+Pallas, so those are remote-only. See [`benchmarks/README.md`](benchmarks/README.md).
 
 ## License
 
