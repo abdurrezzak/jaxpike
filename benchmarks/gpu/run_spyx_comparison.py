@@ -62,10 +62,15 @@ def _run(cmd: list[str]) -> str:
 
 
 @app.function(gpu=GPU, timeout=6 * 60 * 60, volumes={"/root/data": CACHE})
-def accuracy(epochs: int = 100, hidden: int = 128, batch: int = 256) -> str:
+def accuracy(
+    epochs: int = 100,
+    hidden: int = 128,
+    batch: int = 256,
+    variants: str = "sequential,parallel",
+) -> str:
     """Does jaxpike reach Spyx's reported 70-75% band under their exact protocol?"""
     out = []
-    for variant in ("sequential", "parallel"):
+    for variant in variants.split(","):
         out.append(
             _run(
                 [
@@ -145,9 +150,14 @@ def scaling(epochs: int = 10, trials: int = 3) -> str:
 
 
 @app.local_entrypoint()
-def main(suite: str = "accuracy", epochs: int = 100, trials: int = 5) -> None:
+def main(
+    suite: str = "accuracy",
+    epochs: int = 100,
+    trials: int = 5,
+    variants: str = "sequential,parallel",
+) -> None:
     suites = {
-        "accuracy": lambda: accuracy.remote(epochs=epochs),
+        "accuracy": lambda: accuracy.remote(epochs=epochs, variants=variants),
         "compare": lambda: compare.remote(epochs=epochs, trials=trials),
         "scaling": lambda: scaling.remote(epochs=epochs, trials=trials),
     }

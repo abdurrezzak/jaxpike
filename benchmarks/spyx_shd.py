@@ -107,11 +107,12 @@ class SpyxLIF(eqx.Module):
 
 
 class SpyxLinearLIF(eqx.Module):
-    """`SpyxLIF` with the reset term dropped, which makes the recurrence affine.
+    """`SpyxLIF` with the reset term dropped and nothing else changed.
 
-    This is the reset-free (PSN-style) variant, and the only one of the three that can run
-    parallel-in-time. It is a *different model* from `SpyxLIF` and any timing measured with it
-    must be reported as such.
+    This isolates the reset: the spike still lags the membrane by a step, exactly as in
+    `SpyxLIF`. That makes it the right model for answering "what does reset alone contribute",
+    and the *wrong* model for "how good is a reset-free network", because no one builds a
+    reset-free neuron that also throws away the current step's input. Use `SpyxPSU` for that.
     """
 
     beta: Float[Array, " hidden"]
@@ -143,6 +144,47 @@ class SpyxLinearLIF(eqx.Module):
         return v[-1], self.surrogate(previous - self.threshold)
 
 
+class SpyxPSU(eqx.Module):
+    """Reset-free LIF that integrates *before* spiking, matching Spyx's own `PSU_LIF`.
+
+        v[t] = beta*v[t-1] + x[t]
+        s[t] = H(v[t] - threshold)
+
+    Spyx 1.0.0 ships this as `PSU_LIF` / `AssociativeLIF` (marked experimental) with a
+    `jax.lax.associative_scan` path, so the reset-free parallel idea is no longer unique to
+    jaxpike -- it was absent from 0.1.19, the release the paper benchmarked.
+
+    Against `SpyxLinearLIF` this drops the one-step spike lag, which is a second difference
+    from `SpyxLIF` and therefore not a clean reset ablation. It is, however, the model anyone
+    would actually train, so it is the one a speed claim should be attached to.
+    """
+
+    beta: Float[Array, " hidden"]
+    surrogate: jp.Surrogate
+    threshold: float = eqx.field(static=True)
+
+    def __init__(self, hidden: int, *, key, threshold: float = 1.0, k: float = 2.0):
+        self.beta = _init_beta(key, (hidden,))
+        self.surrogate = SpyxArcTan(k=k)
+        self.threshold = threshold
+
+    def init_state(self, input_shape: tuple[int, ...]):
+        return jnp.zeros(input_shape, dtype=STATE_DTYPE)
+
+    def out_shape(self, input_shape: tuple[int, ...]) -> tuple[int, ...]:
+        return input_shape
+
+    def __call__(self, state, x):
+        v = jnp.clip(self.beta, 0.0, 1.0) * state + x.astype(STATE_DTYPE)
+        return v, self.surrogate(v - self.threshold)
+
+    def parallel_apply(self, state, xs):
+        beta = jnp.clip(self.beta, 0.0, 1.0)
+        a = jnp.broadcast_to(beta, xs.shape)
+        v = scan_linear_recurrence(a, xs.astype(STATE_DTYPE), state)
+        return v[-1], self.surrogate(v - self.threshold)
+
+
 class SpyxLI(eqx.Module):
     """Spyx's leaky-integrator readout: ``v[t] = beta*v[t-1] + x[t]``, output is `v[t]`."""
 
@@ -168,10 +210,13 @@ class SpyxLI(eqx.Module):
         return v[-1], v
 
 
-def build(hidden: int, in_channels: int, key, *, reset_free: bool) -> jp.Sequential:
+NEURONS = {"lif": SpyxLIF, "linear": SpyxLinearLIF, "psu": SpyxPSU}
+
+
+def build(hidden: int, in_channels: int, key, *, neuron_kind: str) -> jp.Sequential:
     """The Spyx benchmark network. Linear layers carry no bias, matching their notebook."""
     k1, k2, k3, k4, k5, k6 = jax.random.split(key, 6)
-    neuron = SpyxLinearLIF if reset_free else SpyxLIF
+    neuron = NEURONS[neuron_kind]
     return jp.Sequential(
         jp.Dense(in_channels, hidden, key=k1, use_bias=False),
         neuron(hidden, key=k2),
@@ -291,6 +336,23 @@ def accuracy(model, runner, inputs, labels, batch_size: int = 256) -> float:
     return correct / max(total, 1)
 
 
+def layer_rates(model, runner, inputs, batch_size: int = 256) -> list[float]:
+    """Firing rate after each spiking layer.
+
+    Reset-free neurons cannot depress themselves after firing, so the failure mode to look for
+    is saturation -- a layer firing on nearly every step carries no temporal information and
+    sits where the surrogate gradient is flat.
+    """
+    xs = jnp.swapaxes(jnp.asarray(inputs[:batch_size], dtype=jnp.float32), 0, 1)
+    rates = []
+    for index, layer in enumerate(model.layers):
+        if isinstance(layer, tuple(NEURONS.values())):
+            prefix = jp.Sequential(*model.layers[: index + 1])
+            spikes, _ = runner(prefix, xs)
+            rates.append(float(jp.density(spikes)))
+    return rates
+
+
 def peak_scratch_bytes(model, runner, batch_size: int, timesteps: int, channels: int) -> int:
     """XLA's planned peak scratch for one training step, the measure used elsewhere here."""
     params, static = eqx.partition(model, eqx.is_inexact_array)
@@ -306,10 +368,13 @@ def peak_scratch_bytes(model, runner, batch_size: int, timesteps: int, channels:
     return compile_stats(one, params, opt_state, xs, ys)["temp_bytes"]
 
 
+# Each variant names a runner and the neuron it is valid for. `linear` isolates reset;
+# `parallel` uses the reset-free neuron anyone would actually train.
 RUNNERS = {
-    "sequential": (jp.unroll, False),
-    "checkpointed": (jp.unroll_checkpointed, False),
-    "parallel": (jp.unroll_parallel, True),
+    "sequential": (jp.unroll, "lif"),
+    "checkpointed": (jp.unroll_checkpointed, "lif"),
+    "linear-ablation": (jp.unroll_parallel, "linear"),
+    "parallel": (jp.unroll_parallel, "psu"),
 }
 
 
@@ -327,7 +392,7 @@ def main() -> None:
     ap.add_argument("--smoke", action="store_true", help="synthetic data, tiny, for CPU")
     args = ap.parse_args()
 
-    runner, reset_free = RUNNERS[args.variant]
+    runner, neuron_kind = RUNNERS[args.variant]
     print(f"device: {jax.devices()[0]}")
 
     if args.smoke:
@@ -347,10 +412,13 @@ def main() -> None:
     train_labels = jnp.asarray(y_train, dtype=jnp.int32)
 
     key = jax.random.key(0)
-    model = build(args.hidden, args.channels, key, reset_free=reset_free)
+    model = build(args.hidden, args.channels, key, neuron_kind=neuron_kind)
 
     scratch = peak_scratch_bytes(model, runner, args.batch, args.timesteps, args.channels)
-    print(f"variant {args.variant}  hidden {args.hidden}  batch {args.batch}  T {args.timesteps}")
+    print(
+        f"variant {args.variant} ({neuron_kind})  hidden {args.hidden}  "
+        f"batch {args.batch}  T {args.timesteps}"
+    )
     print(f"peak scratch: {scratch / 2**20:.1f} MB")
 
     trained, losses = train(
@@ -364,13 +432,15 @@ def main() -> None:
         key=key,
     )
     test_acc = accuracy(trained, runner, x_test, y_test)
+    rates = layer_rates(trained, runner, x_test)
     print(f"final train loss {float(losses[-1]):.4f}   TEST ACCURACY: {test_acc:.4f}")
+    print("layer firing rates: " + ", ".join(f"{r:.3f}" for r in rates))
 
     if args.trials:
         times = []
         for trial in range(args.trials + 1):
             start = time.perf_counter()
-            fresh = build(args.hidden, args.channels, key, reset_free=reset_free)
+            fresh = build(args.hidden, args.channels, key, neuron_kind=neuron_kind)
             _, out = train(
                 fresh,
                 runner,
