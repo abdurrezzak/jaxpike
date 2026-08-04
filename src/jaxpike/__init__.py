@@ -19,6 +19,7 @@ from .neurons import (
     LIFState,
     LinearLIF,
 )
+from .online import eprop_grads, eprop_value_and_grad
 from .parallel import unroll_parallel
 from .plasticity import (
     MARKRAM_PRESETS,
@@ -78,6 +79,8 @@ __all__ = [
     "cross_entropy",
     "data",
     "density",
+    "eprop_grads",
+    "eprop_value_and_grad",
     "iterate_batches",
     "lif_gain",
     "make_step",

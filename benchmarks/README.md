@@ -277,3 +277,53 @@ to 5.3 GB and, more importantly, cut per-batch PCIe traffic 4×. Before the fix 
 comparison showed only 1.56× — the input pipeline had become the bottleneck and was masking
 the compute win. After it, 2.4×. Worth remembering as a general rule: spike data is binary,
 so storing or transferring it as float is always four times more traffic than necessary.
+
+
+---
+
+## Online learning (e-prop) — 2026-08-04
+
+BPTT stores every timestep and walks backwards. e-prop carries an eligibility trace forward
+and accumulates the weight gradient in place, so memory does not grow with sequence length.
+
+### Memory: flat in T
+
+Peak scratch bytes for one gradient, 2-layer network, measured through XLA's allocation plan.
+
+| T | BPTT | e-prop | ratio |
+|---:|---:|---:|---:|
+| 100 | 210,984 | 3,128 | 68× |
+| 500 | 1,046,184 | 3,128 | 335× |
+| 1,000 | 2,090,024 | 3,128 | 668× |
+| 4,000 | 8,354,024 | 3,128 | **2671×** |
+
+The e-prop column is *identical* at every length. That is the whole point of the method, and
+it is what makes training on arbitrarily long streams possible.
+
+### Accuracy of the gradient
+
+Cosine similarity against the true BPTT gradient, 40 timesteps.
+
+| | reset-free (`LinearLIF`) | with reset (`LIF`) |
+|---|---:|---:|
+| layer feeding the loss | **1.000000** (exact to 2e-07) | 0.9988 |
+| hidden layer | 0.879 | 0.917 |
+
+Two independent sources of approximation, and it is worth keeping them apart. **Reset** feeds
+a spike back into its own membrane, a temporal path the factorization does not carry; without
+it, the membrane filter is the only route through time and the gradient is exact to float
+precision. **Depth** is the other: a hidden layer's learning signal would have to be filtered
+backwards through each membrane to be exact, which is a backward pass in time and the thing
+online learning exists to avoid, so it is propagated spatially only. Cosine near 0.9 is a
+well-aligned descent direction rather than the true gradient, and that is what makes it work.
+
+### One bug worth recording
+
+The first implementation evaluated the surrogate derivative at the **post-reset** membrane.
+Since the threshold comparison happens before reset, this silently mis-placed the derivative
+and dropped `LIF` gradient alignment to cosine 0.32 — while leaving `LinearLIF` exact, because
+without reset the two membranes are the same value. A reset-free-only test would have passed.
+
+The second implementation computed the right gradient but stacked activations across time,
+so it grew 10.0× with T against BPTT's 9.9× — the correct answer with none of the benefit the
+method exists for. Only measuring memory caught it.
