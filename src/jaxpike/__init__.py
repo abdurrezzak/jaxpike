@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from . import viz
 from .conv import Conv2d, Flatten, Pool2d
 from .execution import density, spike_count, spike_rate, unroll, unroll_checkpointed
 from .init import lif_gain
@@ -84,4 +85,5 @@ __all__ = [
     "unroll",
     "unroll_checkpointed",
     "unroll_parallel",
+    "viz",
 ]

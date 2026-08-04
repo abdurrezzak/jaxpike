@@ -138,6 +138,27 @@ class MySurrogate(jp.Surrogate):
         return jax.nn.sigmoid(self.slope * v)
 ```
 
+## Visualization
+
+```python
+from jaxpike import viz
+
+viz.raster(spikes)                     # the canonical SNN plot
+viz.membrane(voltages, spikes=spikes, threshold=1.0)
+viz.layer_rates_from(net, xs)          # is my network silent?
+viz.rate_heatmap(spikes)
+viz.weights(net.layers[0].weight)
+```
+
+Every function takes an optional `ax` and returns it, so plots compose into larger figures.
+`viz.Theme.dark()` switches to a dark surface with its own selected colour steps rather than
+an inverted light palette.
+
+`layer_rates_from` is the one to reach for first. Deep SNNs fail by activity decaying with
+depth until the output never fires, and a silent network has no gradient anywhere to recover
+from — this plots the firing rate after every spiking layer and labels any that have gone
+silent or saturated.
+
 ## Hardware export via NIR
 
 [NIR](https://github.com/neuromorphs/NIR) is the field's interchange format — ONNX for
@@ -149,7 +170,7 @@ or Xylo.
 from jaxpike import nir
 
 nir.save(net, "model.nir", input_shape=(1, 700), dt_seconds=1e-3)
-net = nir.load("model.nir")          # exact round trip, including convnets
+net = nir.load("model.nir")  # exact round trip, including convnets
 ```
 
 Three things worth knowing, all verified rather than assumed:
