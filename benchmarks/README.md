@@ -225,16 +225,31 @@ Dense(256,20) → LeakyIntegrator`, max-membrane readout, AdamW.
 
 ### Accuracy
 
-| | test accuracy |
-|---|---:|
-| **jaxpike, feedforward, 40 epochs** | **0.676** |
-| Cramer et al. 2020, feedforward reference | ~0.48 |
-| Cramer et al. 2020, recurrent reference | ~0.71 |
+**Protocol note, because it changes the numbers.** An earlier version of these results
+reported the best test accuracy across epochs. That selects the epoch *on the test set* and
+inflates the figure — measured here by about 0.5 to 4 points depending on the run. The
+numbers below hold out 10% of train as validation, pick the epoch by validation accuracy, and
+report test once at that epoch. Slightly worse numbers, and the only ones that will reproduce.
 
-Comfortably past the published feedforward baseline and near the recurrent one, without a
-recurrent layer, adaptive neurons, augmentation, or a learning-rate schedule. It overfits
-hard — training accuracy reaches 99.8% while test plateaus in the mid 60s — so the headroom
-here is regularization and data augmentation, not architecture.
+| | validation | **test** |
+|---|---:|---:|
+| jaxpike, feedforward + augmentation | 0.888 | **0.626** |
+| jaxpike, **recurrent** + augmentation | 0.839 | **0.696** |
+| Cramer et al. 2020, feedforward reference | — | ~0.48 |
+| Cramer et al. 2020, recurrent reference | — | ~0.71 |
+
+Feedforward comfortably beats its published baseline; recurrent lands just under the
+published recurrent one.
+
+**Recurrence is worth +7.0 points, and the reason is visible in the validation column.** The
+feedforward model scores *higher* on validation (0.888 vs 0.839) and *lower* on test (0.626 vs
+0.696). Validation is drawn from the training pool, but SHD's test set contains speakers held
+out entirely — so a model can fit the training speakers well and still fail to generalize to
+new ones. Recurrence buys speaker generalization specifically, not raw capacity. The
+test-selected protocol hid this completely, because it never looked at validation at all.
+
+Augmentation is a random time shift plus input spike dropout, both label-preserving: a spoken
+digit shifted a few milliseconds is the same digit.
 
 ### Training speed, sequential versus parallel-in-time
 

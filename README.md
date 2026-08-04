@@ -2,9 +2,10 @@
 
 Fast, flexible spiking neural networks in JAX.
 
-> **Status: pre-alpha.** Working library with a real result: **67.6% on Spiking Heidelberg
-> Digits**, against the ~48% published feedforward baseline, trained in under two minutes on
-> an NVIDIA T4. Parallel-in-time execution makes training **~2.5× faster end to end**
+> **Status: pre-alpha.** Working library with a real result: **69.6% on Spiking Heidelberg
+> Digits** with a recurrent network, against a ~71% published recurrent baseline and ~48%
+> feedforward, trained in minutes on an NVIDIA T4 (epoch selected on a held-out validation
+> split, not on test). Parallel-in-time execution makes training **~2.5× faster end to end**
 > (17–21× on the isolated forward/backward pass) with bit-identical spike trains, and
 > rematerialization cuts BPTT memory **67×**. Everything is reproducible from
 > [`benchmarks/`](benchmarks/) and [`examples/`](examples/), including the cases where we
@@ -82,16 +83,19 @@ connections, branching, fan-in — and does not ask whether the result is sensib
 ```python
 net = jp.Graph(
     nodes={
-        "w_in":   jp.Dense(700, 128, key=k1),
+        "w_in": jp.Dense(700, 128, key=k1),
         "hidden": jp.LIF(tau=20.0),
-        "w_rec":  jp.Dense(128, 128, key=k2),      # hidden feeding itself
-        "w_out":  jp.Dense(128, 20, key=k3),
-        "out":    jp.LeakyIntegrator(tau=20.0),
+        "w_rec": jp.Dense(128, 128, key=k2),  # hidden feeding itself
+        "w_out": jp.Dense(128, 20, key=k3),
+        "out": jp.LeakyIntegrator(tau=20.0),
     },
     edges=[
-        ("input", "w_in"), ("w_in", "hidden"),
-        ("hidden", "w_rec"), ("w_rec", "hidden"),   # the cycle
-        ("hidden", "w_out"), ("w_out", "out"),
+        ("input", "w_in"),
+        ("w_in", "hidden"),
+        ("hidden", "w_rec"),
+        ("w_rec", "hidden"),  # the cycle
+        ("hidden", "w_out"),
+        ("w_out", "out"),
     ],
     output="out",
 )

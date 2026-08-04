@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import viz
+from . import data, viz
 from .conv import Conv2d, Flatten, Pool2d
 from .execution import density, spike_count, spike_rate, unroll, unroll_checkpointed
 from .graph import Graph, GraphState
@@ -76,6 +76,7 @@ __all__ = [
     "accuracy",
     "count_logits",
     "cross_entropy",
+    "data",
     "density",
     "iterate_batches",
     "lif_gain",
