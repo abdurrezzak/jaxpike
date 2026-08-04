@@ -5,6 +5,7 @@ from __future__ import annotations
 from . import viz
 from .conv import Conv2d, Flatten, Pool2d
 from .execution import density, spike_count, spike_rate, unroll, unroll_checkpointed
+from .graph import Graph, GraphState
 from .init import lif_gain
 from .layers import Dense, Sequential
 from .neurons import (
@@ -57,6 +58,8 @@ __all__ = [
     "DopamineState",
     "FastSigmoid",
     "Flatten",
+    "Graph",
+    "GraphState",
     "Izhikevich",
     "IzhikevichState",
     "LIFState",

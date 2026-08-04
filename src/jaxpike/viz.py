@@ -473,6 +473,7 @@ def weights(
 
 __all__ = [
     "Theme",
+    "architecture",
     "layer_rates",
     "layer_rates_from",
     "membrane",
@@ -480,3 +481,178 @@ __all__ = [
     "rate_heatmap",
     "weights",
 ]
+
+
+def _topology(net, input_shape):
+    """Normalize a Sequential or Graph into (nodes, edges, back-edges, output, shapes)."""
+    from .graph import INPUT, Graph
+    from .layers import Sequential
+
+    if isinstance(net, Graph):
+        labels = {name: type(layer).__name__ for name, layer in net.nodes.items()}
+        shapes = net.shapes(input_shape) if input_shape else {}
+        return labels, list(net.edges), set(net.back), net.output, shapes
+
+    layers = net.layers if isinstance(net, Sequential) else (net,)
+    labels = {str(i): type(layer).__name__ for i, layer in enumerate(layers)}
+    edges = [(INPUT, "0")] + [(str(i), str(i + 1)) for i in range(len(layers) - 1)]
+    shapes = {}
+    if input_shape:
+        shape = input_shape
+        shapes[INPUT] = shape
+        for i, layer in enumerate(layers):
+            shape = layer.out_shape(shape)
+            shapes[str(i)] = shape
+    return labels, edges, set(), str(len(layers) - 1), shapes
+
+
+def architecture(
+    net,
+    *,
+    input_shape=None,
+    ax=None,
+    theme: Theme | None = None,
+    figsize=None,
+    title: str | None = "Architecture",
+):
+    """Draw the network's topology: which layer feeds which.
+
+    Works for `Sequential` and `Graph`. Feedback edges -- the ones a `Graph` delays by a
+    timestep to break a cycle -- are drawn curved, dashed and in the alert hue, because the
+    difference between a feedforward and a recurrent network is the single most important
+    thing a topology diagram can communicate, and it must not rest on the reader tracing
+    arrows.
+
+    Pass `input_shape` to annotate each node with the shape it produces.
+    """
+    from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+
+    from .graph import INPUT
+
+    theme = theme or Theme.light()
+    labels, edges, back, output, shapes = _topology(net, input_shape)
+
+    # Longest path from the input places each node in a column; nodes at equal depth stack.
+    forward = [(s, d) for s, d in edges if (s, d) not in back]
+    depth = {INPUT: 0}
+    for _ in range(len(labels) + 1):
+        for src, dst in forward:
+            if src in depth:
+                depth[dst] = max(depth.get(dst, 0), depth[src] + 1)
+    for name in labels:
+        depth.setdefault(name, 0)
+
+    columns: dict[int, list[str]] = {}
+    for name in [INPUT, *labels]:
+        columns.setdefault(depth[name], []).append(name)
+
+    position = {}
+    for column, members in columns.items():
+        for row, name in enumerate(members):
+            position[name] = (column * 2.6, -(row - (len(members) - 1) / 2) * 1.5)
+
+    width = max(depth.values()) + 1
+    height = max(len(m) for m in columns.values())
+    ax = _prepare(ax, theme, figsize or (max(7, width * 2.2), max(3.2, height * 1.5)))
+    ax.set_axis_off()
+
+    for src, dst in edges:
+        x0, y0 = position[src]
+        x1, y1 = position[dst]
+        delayed = (src, dst) in back
+        # Curve anything that does not connect adjacent columns. A skip connection drawn
+        # straight passes behind the nodes it skips and becomes invisible, which makes the
+        # diagram understate the topology -- the worst failure a topology diagram can have.
+        span = abs(depth[dst] - depth[src])
+        if delayed:
+            rad = 0.42
+        elif span > 1:
+            rad = -0.18 - 0.06 * span
+        else:
+            rad = 0.0
+        ax.add_patch(
+            FancyArrowPatch(
+                (x0 + 0.62, y0),
+                (x1 - 0.62, y1),
+                connectionstyle=f"arc3,rad={rad}",
+                arrowstyle="-|>",
+                mutation_scale=13,
+                linewidth=1.8 if delayed else 1.4,
+                linestyle="--" if delayed else "-",
+                color=theme.series[7] if delayed else theme.secondary,
+                alpha=0.95 if delayed else 0.6,
+                zorder=1 if span <= 1 else 4,
+            )
+        )
+
+    for name in [INPUT, *labels]:
+        x, y = position[name]
+        is_input, is_output = name == INPUT, name == output
+        face = theme.surface if is_input else (theme.series[0] if is_output else theme.surface)
+        edge = theme.secondary if is_input else theme.series[0]
+        ax.add_patch(
+            FancyBboxPatch(
+                (x - 0.6, y - 0.3),
+                1.2,
+                0.6,
+                boxstyle="round,pad=0.06,rounding_size=0.12",
+                facecolor=face,
+                edgecolor=edge,
+                linewidth=1.8,
+                zorder=2,
+            )
+        )
+        ink = theme.surface if is_output else theme.text
+        ax.text(
+            x,
+            y + 0.06,
+            name,
+            ha="center",
+            va="center",
+            fontsize=9,
+            fontweight="bold",
+            color=ink,
+            zorder=3,
+        )
+        subtitle = "input" if is_input else labels[name]
+        ax.text(
+            x,
+            y - 0.13,
+            subtitle,
+            ha="center",
+            va="center",
+            fontsize=7.5,
+            color=theme.surface if is_output else theme.secondary,
+            zorder=3,
+        )
+        if shapes.get(name):
+            ax.text(
+                x,
+                y - 0.42,
+                # Multiplication sign, not the letter x: this is a shape label.
+                "×".join(str(d) for d in shapes[name][1:]) or "scalar",  # noqa: RUF001
+                ha="center",
+                va="top",
+                fontsize=7.5,
+                color=theme.secondary,
+                zorder=3,
+            )
+
+    ax.set_xlim(-1.2, max(x for x, _ in position.values()) + 1.2)
+    ys = [y for _, y in position.values()]
+    ax.set_ylim(min(ys) - 1.0, max(ys) + 0.95)
+    if title:
+        ax.set_title(title, loc="left", fontsize=11, color=theme.text)
+    # Whether the network is recurrent goes in its own annotation rather than appended to the
+    # title, which reads as a duplicate whenever the caller's title already says it.
+    ax.text(
+        0.999,
+        1.0,
+        "dashed = feedback, delayed one timestep" if back else "feedforward",
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=9,
+        color=theme.series[7] if back else theme.secondary,
+    )
+    return ax

@@ -74,6 +74,42 @@ spikes_a, state = jp.unroll(net, xs[:50])
 spikes_b, state = jp.unroll(net, xs[50:], state)  # exactly equals the unchunked run
 ```
 
+## Arbitrary topologies
+
+`Sequential` is a straight chain. `Graph` wires any layer to any other — recurrence, skip
+connections, branching, fan-in — and does not ask whether the result is sensible.
+
+```python
+net = jp.Graph(
+    nodes={
+        "w_in":   jp.Dense(700, 128, key=k1),
+        "hidden": jp.LIF(tau=20.0),
+        "w_rec":  jp.Dense(128, 128, key=k2),      # hidden feeding itself
+        "w_out":  jp.Dense(128, 20, key=k3),
+        "out":    jp.LeakyIntegrator(tau=20.0),
+    },
+    edges=[
+        ("input", "w_in"), ("w_in", "hidden"),
+        ("hidden", "w_rec"), ("w_rec", "hidden"),   # the cycle
+        ("hidden", "w_out"), ("w_out", "out"),
+    ],
+    output="out",
+)
+
+viz.architecture(net, input_shape=(1, 700))
+```
+
+![Architecture diagrams](docs/figures/architecture_light.png)
+
+Two rules make any wiring well-defined, and they are the only two. **A node with several
+incoming edges sums them**, which is what a synapse does and what makes fan-in and skip
+connections work without special syntax. **An edge that closes a cycle reads the previous
+timestep**, because a cycle cannot be resolved within one step — that is what makes a
+recurrent SNN recurrent, and `Graph` finds those back-edges for you.
+
+Because recurrence is a genuine cycle in time, a recurrent `Graph` cannot run
+parallel-in-time and says so rather than quietly computing something else.
+
 ## Spiking convnets
 
 Layout is NHWC — `(time, batch, height, width, channels)` — because XLA's convolutions are
