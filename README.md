@@ -138,6 +138,35 @@ class MySurrogate(jp.Surrogate):
         return jax.nn.sigmoid(self.slope * v)
 ```
 
+## Hardware export via NIR
+
+[NIR](https://github.com/neuromorphs/NIR) is the field's interchange format — ONNX for
+spiking networks. Exporting to it lets a model trained here run in snnTorch, Norse, Spyx,
+Lava, Rockpool or Nengo, and deploy to Intel Loihi, SpiNNaker2, BrainScaleS-2, SynSense Speck
+or Xylo.
+
+```python
+from jaxpike import nir
+
+nir.save(net, "model.nir", input_shape=(1, 700), dt_seconds=1e-3)
+net = nir.load("model.nir")          # exact round trip, including convnets
+```
+
+Three things worth knowing, all verified rather than assumed:
+
+**Units are not standardized by NIR.** It stores `tau` in seconds; our neurons store it in
+timesteps. `dt_seconds` declares what one of your timesteps physically means, and getting it
+wrong rescales every time constant in the model.
+
+**Some models cannot be exported, and those raise rather than silently changing.**
+`reset="subtract"` has no NIR equivalent (NIR resets to a fixed value); so do max pooling,
+adaptive thresholds, Izhikevich dynamics and short-term plasticity.
+
+**Leaving the library is not bit-exact.** NIR specifies a differential equation, not a
+discretization — we solve it exactly, Norse uses forward Euler. snnTorch imports our graphs
+but assumes `dt = 1e-4 s` regardless of the file and has no mapping for NIR's `LI` node, so a
+`LeakyIntegrator` readout will not cross into it. Check numerically on the far side.
+
 ## Development
 
 ```bash
