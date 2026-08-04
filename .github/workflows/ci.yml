@@ -20,9 +20,15 @@ jobs:
         python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
+      # Provides the interpreter the matrix asks for; without it `--system` installs into
+      # whatever python the runner ships and the matrix has no effect.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          cache-dependency-glob: pyproject.toml
       - name: Install
         run: uv pip install --system -e ".[dev]"
       - name: Lint
