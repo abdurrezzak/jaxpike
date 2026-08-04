@@ -140,12 +140,17 @@ class MySurrogate(jp.Surrogate):
 
 ## Visualization
 
+![Visualization gallery](docs/figures/gallery_light.png)
+
+*Real Spiking Heidelberg Digits data. Regenerate with `PYTHONPATH=. python examples/gallery.py`;
+every figure is also rendered for dark mode.*
+
 ```python
 from jaxpike import viz
 
-viz.raster(spikes)                     # the canonical SNN plot
+viz.raster(spikes)  # the canonical SNN plot
 viz.membrane(voltages, spikes=spikes, threshold=1.0)
-viz.layer_rates_from(net, xs)          # is my network silent?
+viz.layer_rates_from(net, xs)  # is my network silent?
 viz.rate_heatmap(spikes)
 viz.weights(net.layers[0].weight)
 ```
@@ -153,6 +158,15 @@ viz.weights(net.layers[0].weight)
 Every function takes an optional `ax` and returns it, so plots compose into larger figures.
 `viz.Theme.dark()` switches to a dark surface with its own selected colour steps rather than
 an inverted light palette.
+
+The seven Izhikevich firing patterns under identical drive:
+
+![Izhikevich firing patterns](docs/figures/izhikevich_light.png)
+
+And the plasticity mechanisms — the STDP window, short-term depression versus facilitation,
+and reward arriving seconds after the spike pair that earned it:
+
+![Plasticity](docs/figures/plasticity_light.png)
 
 `layer_rates_from` is the one to reach for first. Deep SNNs fail by activity decaying with
 depth until the output never fires, and a silent network has no gradient anywhere to recover

@@ -164,7 +164,8 @@ def test_membrane_marks_the_spikes_it_is_given():
     ax = membrane(jnp.stack(trace), spikes=spikes, threshold=1.0)
     assert jnp.sum(spikes) > 0
     assert ax.collections, "spike markers should be drawn"
-    assert ax.get_legend() is not None
+    # Directly labelled rather than given a legend box, so identity is still not colour-alone.
+    assert "spike" in [text.get_text() for text in ax.texts]
 
 
 def test_rate_heatmap_binning_is_clamped_to_sequence_length():

@@ -189,12 +189,18 @@ def raster(
             rasterized=len(times) > 20000,
         )
     else:
+        # Two colours, not a ramp. Spikes are binary, so a sequential scale would paint every
+        # empty slot in the ramp's lightest step and "no spike" would read as "a little bit".
+        from matplotlib.colors import ListedColormap
+
         ax.imshow(
             data.T,
             aspect="auto",
             origin="lower",
             interpolation="nearest",
-            cmap=_sequential_cmap(theme),
+            cmap=ListedColormap([theme.surface, theme.series[0]]),
+            vmin=0,
+            vmax=1,
             extent=(0, steps, 0, neurons),
         )
 
@@ -263,13 +269,16 @@ def membrane(
                 zorder=3,
                 label="spike",
             )
-            # Below the axes, not inside: an upper-right legend lands on the final spikes.
-            ax.legend(
-                frameon=False,
+            # One direct label on the first marker, rather than a legend box: a legend
+            # placed inside lands on the trace, and one placed outside detaches from the
+            # panel entirely when the plot is a cell in a larger grid.
+            ax.annotate(
+                "spike",
+                xy=(times[0], np.max(trace)),
+                xytext=(6, 4),
+                textcoords="offset points",
                 fontsize=9,
-                labelcolor=theme.secondary,
-                loc="upper left",
-                bbox_to_anchor=(0.0, -0.24),
+                color=theme.secondary,
             )
 
     ax.set_xlim(0, len(trace))
