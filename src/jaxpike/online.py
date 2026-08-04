@@ -49,9 +49,9 @@ Recurrent connections are dropped for the same reason as reset, which is why a r
 
 | T | BPTT | e-prop | ratio |
 |---:|---:|---:|---:|
-| 100 | 210,984 | 3,128 | 68× |
-| 1,000 | 2,090,024 | 3,128 | 668× |
-| 4,000 | 8,354,024 | 3,128 | **2671×** |
+| 100 | 210,984 | 3,128 | 68x |
+| 1,000 | 2,090,024 | 3,128 | 668x |
+| 4,000 | 8,354,024 | 3,128 | **2671x** |
 
 Flat in `T`, exactly as claimed — the traces are carried in the scan carry and the weight
 gradient is accumulated in place, so nothing per-timestep is ever stored. Getting this right
