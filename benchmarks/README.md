@@ -327,3 +327,67 @@ without reset the two membranes are the same value. A reset-free-only test would
 The second implementation computed the right gradient but stacked activations across time,
 so it grew 10.0× with T against BPTT's 9.9× — the correct answer with none of the benefit the
 method exists for. Only measuring memory caught it.
+
+
+---
+
+## Head-to-head against Spyx on SHD — 2026-08-04, NVIDIA T4 (Modal)
+
+Spyx is the closest competitor: also JAX, also JIT-compiled, also benchmarked on SHD. Table 1
+of [arXiv 2402.18994](https://arxiv.org/abs/2402.18994) reports 100-epoch training times for
+Spyx, snnTorch and mlGeNN, which makes it the one published comparison that can be contested
+without a PyTorch-versus-JAX confound.
+
+### Why these runs re-measure Spyx instead of quoting their table
+
+Their numbers are an **RTX A6000 with 48 GB**. Ours are a **T4 with 16 GB**, the largest GPU
+Modal's free tier allows. Quoting one beside the other would compare hardware. So
+`benchmarks/gpu/run_spyx_comparison.py` installs both libraries in **one container** and runs
+them on **one GPU**, and `benchmarks/spyx_reference.py` is Spyx's own benchmark code from
+`research/paper/SHD_jax.ipynb` rather than a re-implementation, pinned to `spyx==0.1.19` —
+the release contemporary with the paper. Later Spyx moved to Flax NNX and that API no longer
+exists. Both libraries receive bit-identical input arrays, so neither pays a loader cost the
+other avoids.
+
+### The protocol, taken from their notebook rather than the paper prose
+
+SHD downsampled to **128 input channels** at **256 timesteps**, binary-rasterized;
+`Linear(128, H) -> LIF -> Linear(H, H) -> LIF -> Linear(H, 20) -> LI`, all Linear layers
+biasless; Adam at 5e-4; integral cross-entropy with 0.3 label smoothing; 100 epochs; fp32;
+the whole dataset staged on the accelerator, with epochs and batches both `lax.scan`.
+
+Their LIF is **not** jaxpike's `LIF`, and substituting one would have measured the model
+rather than the implementation. Two differences matter: the spike is read from the membrane
+*before* this step's input, so it lags a timestep, and the input carries no `(1 - alpha)`
+normalization, so weights are not in threshold units. `benchmarks/spyx_shd.py` therefore
+implements `SpyxLIF`, `SpyxLinearLIF`, `SpyxLI` and their arctan surrogate directly against
+the state contract.
+
+### Accuracy: the protocol was the gap, not the library
+
+| | test accuracy |
+|---|---:|
+| Spyx, as reported in the paper | 0.70 – 0.75 |
+| **jaxpike, matched model (`SpyxLIF`, sequential)** | **0.751** |
+| jaxpike, reset-free (`SpyxLinearLIF`, parallel-in-time) | 0.627 |
+| jaxpike's own `examples/shd.py`, feedforward | 0.626 |
+
+The 0.626 in `examples/shd.py` is a *different experiment*, not a worse library: 700 input
+channels, a single `tau=20`, threshold 0.5 and AdamW at 2e-3. Spyx's benchmark downsamples to
+128 channels and learns a per-neuron `beta` initialized around 0.5 — a much leakier and
+heterogeneous membrane. Matching the specification closed the gap outright.
+
+**The unfavourable half: dropping reset costs about 12 accuracy points here** (0.627 against
+0.751), and reset is exactly what the parallel-in-time path requires. Under *these*
+hyperparameters the fast path is also the less accurate one, so any speed number taken from
+the reset-free row has to be quoted with its accuracy attached. Whether that gap is
+fundamental or just under-tuning is untested — the PSN literature reaches strong SHD accuracy
+with reset-free neurons, and no hyperparameter search was run for this variant.
+
+### Correctness of the ported model
+
+Checked before any timing was recorded, since a fast wrong answer is worth nothing:
+parallel-in-time matches sequential to **2.4e-07** on the reset-free model (float32
+accumulation order, consistent with §4), checkpointed matches sequential exactly, and the
+reset-based model is **refused** by `unroll_parallel` by name rather than silently
+mis-computed.
