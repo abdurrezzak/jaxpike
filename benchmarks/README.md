@@ -363,26 +363,64 @@ normalization, so weights are not in threshold units. `benchmarks/spyx_shd.py` t
 implements `SpyxLIF`, `SpyxLinearLIF`, `SpyxLI` and their arctan surrogate directly against
 the state contract.
 
-### Accuracy: the protocol was the gap, not the library
+### Accuracy against Spyx: matched model, matched result
+
+Like for like — both models have reset, both run the same protocol:
 
 | | test accuracy |
 |---|---:|
 | Spyx, as reported in the paper | 0.70 – 0.75 |
-| **jaxpike, matched model (`SpyxLIF`, sequential)** | **0.751** |
-| jaxpike, reset-free (`SpyxLinearLIF`, parallel-in-time) | 0.627 |
-| jaxpike's own `examples/shd.py`, feedforward | 0.626 |
+| **jaxpike, matched model (`SpyxLIF`)** | **0.751** |
 
-The 0.626 in `examples/shd.py` is a *different experiment*, not a worse library: 700 input
-channels, a single `tau=20`, threshold 0.5 and AdamW at 2e-3. Spyx's benchmark downsamples to
-128 channels and learns a per-neuron `beta` initialized around 0.5 — a much leakier and
-heterogeneous membrane. Matching the specification closed the gap outright.
+jaxpike's own `examples/shd.py` scores 0.626 feedforward, but that is a *different
+experiment*, not a worse library: 700 input channels, a single `tau=20`, threshold 0.5 and
+AdamW at 2e-3. Spyx's benchmark downsamples to 128 channels and learns a per-neuron `beta`
+initialized around 0.5 — a much leakier, heterogeneous membrane. Matching the specification
+closed the gap outright.
 
-**The unfavourable half: dropping reset costs about 12 accuracy points here** (0.627 against
-0.751), and reset is exactly what the parallel-in-time path requires. Under *these*
-hyperparameters the fast path is also the less accurate one, so any speed number taken from
-the reset-free row has to be quoted with its accuracy attached. Whether that gap is
-fundamental or just under-tuning is untested — the PSN literature reaches strong SHD accuracy
-with reset-free neurons, and no hyperparameter search was run for this variant.
+### What reset costs, measured separately
+
+This is a jaxpike-internal ablation with **no Spyx counterpart** — the benchmarked release
+(0.1.19) ships no reset-free neuron. It is reported apart from the table above because reset
+is what the parallel-in-time path cannot have, so it prices the fast path:
+
+| model | test accuracy | layer firing rates |
+|---|---:|---|
+| `SpyxLIF` — with reset, sequential only | **0.751** | — |
+| `SpyxPSU` — reset-free, integrate-then-spike, parallel | 0.609 | 0.090, 0.065 |
+| `SpyxLinearLIF` — reset-free with the spike lag kept, parallel | 0.627 | 0.091, 0.067 |
+
+**Removing reset costs about 13 accuracy points here, and two obvious explanations are both
+wrong.**
+
+*Not saturation.* The standard reset-free failure is a neuron that cannot depress itself,
+fires every step, and lands where the surrogate gradient is flat. Measured rates are 6–9%,
+comfortably inside the healthy band — the networks are not saturated, they are simply less
+discriminative.
+
+*Not a spike-timing artifact.* The first ablation removed reset but kept Spyx's one-step spike
+lag, so it also discarded the current step's input; `SpyxPSU` integrates before spiking, which
+is how Spyx's own `PSU_LIF` and jaxpike's `LinearLIF` are written. Correcting it did not
+recover the points — it scored 1.8 points *lower*, which on a single seed is noise.
+
+So the cost looks like a genuine property of the model rather than an implementation detail,
+which agrees with Spyx's own description of their `PSU_LIF`: "removing the reset is a
+deliberate accuracy/parallelism trade-off". **Any speed number taken from a reset-free row has
+to carry this accuracy alongside it.**
+
+Two caveats. These are **single-seed runs with no error bars**, so differences of a couple of
+points mean nothing. And no hyperparameter search was run for the reset-free variants — they
+inherit a threshold and `beta` initialization tuned by Spyx for a neuron that resets, and the
+PSN literature does reach strong SHD accuracy with reset-free neurons, so the gap may narrow
+under a search that has not been done.
+
+### Parallel-in-time is no longer a unique differentiator
+
+Spyx 1.0.0 ships `PSU_LIF` and `AssociativeLIF`: a reset-free neuron evaluated with
+`jax.lax.associative_scan` in `O(log T)` depth, marked experimental. It is absent from 0.1.19,
+the release the paper benchmarked, so the reproduction above is unaffected — but as of their
+current release the reset-free parallel-scan idea is implemented on both sides, and any claim
+that jaxpike alone has it would be false.
 
 ### Correctness of the ported model
 
