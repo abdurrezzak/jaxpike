@@ -129,6 +129,11 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=5e-4)
     ap.add_argument("--trials", type=int, default=0)
     ap.add_argument("--data", default="data/shd")
+    ap.add_argument(
+        "--skip-accuracy",
+        action="store_true",
+        help="time only; skips the extra training run used to report accuracy",
+    )
     args = ap.parse_args()
 
     # Reuse jaxpike's loader for the data so both libraries get identical inputs.
@@ -149,11 +154,12 @@ def main() -> None:
     sample = jnp.unpackbits(xt[: args.batch], axis=1)
     SNN, params = build_snn(args.hidden, args.channels, sample)
 
-    trained, metrics = train(
-        SNN, params, xt, yt, epochs=args.epochs, batch_size=args.batch, lr=args.lr
-    )
-    test_acc = accuracy(SNN, trained, xe, ye)
-    print(f"final train loss {float(metrics[-1]):.4f}   TEST ACCURACY: {test_acc:.4f}")
+    if not args.skip_accuracy:
+        trained, metrics = train(
+            SNN, params, xt, yt, epochs=args.epochs, batch_size=args.batch, lr=args.lr
+        )
+        test_acc = accuracy(SNN, trained, xe, ye)
+        print(f"final train loss {float(metrics[-1]):.4f}   TEST ACCURACY: {test_acc:.4f}")
 
     if args.trials:
         times = []

@@ -390,6 +390,11 @@ def main() -> None:
     ap.add_argument("--trials", type=int, default=0, help="timed trials after one warm-up")
     ap.add_argument("--data", default="data/shd")
     ap.add_argument("--smoke", action="store_true", help="synthetic data, tiny, for CPU")
+    ap.add_argument(
+        "--skip-accuracy",
+        action="store_true",
+        help="time only; skips the extra training run used to report accuracy",
+    )
     args = ap.parse_args()
 
     runner, neuron_kind = RUNNERS[args.variant]
@@ -421,20 +426,21 @@ def main() -> None:
     )
     print(f"peak scratch: {scratch / 2**20:.1f} MB")
 
-    trained, losses = train(
-        model,
-        runner,
-        train_inputs,
-        train_labels,
-        epochs=args.epochs,
-        batch_size=args.batch,
-        lr=args.lr,
-        key=key,
-    )
-    test_acc = accuracy(trained, runner, x_test, y_test)
-    rates = layer_rates(trained, runner, x_test)
-    print(f"final train loss {float(losses[-1]):.4f}   TEST ACCURACY: {test_acc:.4f}")
-    print("layer firing rates: " + ", ".join(f"{r:.3f}" for r in rates))
+    if not args.skip_accuracy:
+        trained, losses = train(
+            model,
+            runner,
+            train_inputs,
+            train_labels,
+            epochs=args.epochs,
+            batch_size=args.batch,
+            lr=args.lr,
+            key=key,
+        )
+        test_acc = accuracy(trained, runner, x_test, y_test)
+        rates = layer_rates(trained, runner, x_test)
+        print(f"final train loss {float(losses[-1]):.4f}   TEST ACCURACY: {test_acc:.4f}")
+        print("layer firing rates: " + ", ".join(f"{r:.3f}" for r in rates))
 
     if args.trials:
         times = []

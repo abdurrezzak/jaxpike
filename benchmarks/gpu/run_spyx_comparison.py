@@ -46,7 +46,14 @@ GPU = "T4"
 CACHE = modal.Volume.from_name("shd-data", create_if_missing=True)
 
 
-def _run(cmd: list[str]) -> str:
+def _run(cmd: list[str], tag: str = "run") -> str:
+    """Run one benchmark and append its output to the shared volume immediately.
+
+    `modal run` blocks on the result, so a dropped client connection kills the call and takes
+    every buffered result with it -- which is how the first attempt at this grid was lost.
+    Writing each result to the volume as it lands makes the run recoverable.
+    """
+    import pathlib
     import subprocess
     import sys
 
@@ -58,7 +65,14 @@ def _run(cmd: list[str]) -> str:
         text=True,
         check=False,
     )
-    return f"$ {' '.join(cmd)}\n{result.stdout}{result.stderr}"
+    text = f"$ {' '.join(cmd)}\n{result.stdout}{result.stderr}"
+
+    results = pathlib.Path("/root/data/results")
+    results.mkdir(parents=True, exist_ok=True)
+    with (results / f"{tag}.txt").open("a") as handle:
+        handle.write(text + "\n")
+    CACHE.commit()
+    return text
 
 
 @app.function(gpu=GPU, timeout=6 * 60 * 60, volumes={"/root/data": CACHE})
@@ -79,7 +93,8 @@ def accuracy(
                     f"--epochs={epochs}",
                     f"--hidden={hidden}",
                     f"--batch={batch}",
-                ]
+                ],
+                "accuracy",
             )
         )
     return "\n".join(out)
@@ -100,7 +115,9 @@ def compare(
                     f"--batch={batch}",
                     f"--epochs={epochs}",
                     f"--trials={trials}",
-                ]
+                    "--skip-accuracy",
+                ],
+                "compare",
             )
         )
         for variant in ("sequential", "checkpointed", "parallel"):
@@ -113,7 +130,9 @@ def compare(
                         f"--batch={batch}",
                         f"--epochs={epochs}",
                         f"--trials={trials}",
-                    ]
+                        "--skip-accuracy",
+                    ],
+                    "compare",
                 )
             )
     return "\n".join(out)
@@ -131,7 +150,9 @@ def scaling(epochs: int = 10, trials: int = 3) -> str:
                     f"--timesteps={timesteps}",
                     f"--epochs={epochs}",
                     f"--trials={trials}",
-                ]
+                    "--skip-accuracy",
+                ],
+                "scaling",
             )
         )
         for variant in ("sequential", "parallel"):
@@ -143,7 +164,9 @@ def scaling(epochs: int = 10, trials: int = 3) -> str:
                         f"--timesteps={timesteps}",
                         f"--epochs={epochs}",
                         f"--trials={trials}",
-                    ]
+                        "--skip-accuracy",
+                    ],
+                    "scaling",
                 )
             )
     return "\n".join(out)
