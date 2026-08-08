@@ -21,8 +21,10 @@ from jaxtyping import Array, Float
 
 BATCHED, SCANNED = "batched", "scanned"
 
-# Timesteps emitted per time-loop iteration. Chosen by measurement; see benchmarks/README.md.
-SCAN_UNROLL = 1
+# Timesteps emitted per time-loop iteration. Measured on a T4 over the SHD training step
+# (benchmarks/scan_unroll.py): 1 -> 27.0 ms, 2 -> 14.2, 4 -> 12.6, 8 -> 12.0, 16 -> 14.4.
+# Past 8 the fused body stops fitting well and compile time grows without a payoff.
+SCAN_UNROLL = 8
 
 
 def _plan(net, input_shape: tuple[int, ...]) -> list[tuple[str, tuple[int, ...]]] | None:
