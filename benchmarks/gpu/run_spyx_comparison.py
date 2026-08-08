@@ -139,22 +139,28 @@ def compare(
 
 
 @app.function(gpu=GPU, timeout=6 * 60 * 60, volumes={"/root/data": CACHE})
-def scaling(epochs: int = 10, trials: int = 3) -> str:
+def scaling(
+    epochs: int = 10,
+    trials: int = 3,
+    timesteps_list: str = "256,512,1024",
+    include_spyx: bool = True,
+) -> str:
     """Where jaxpike is expected to pull away: their scan is linear in T, ours is not."""
     out = []
-    for timesteps in (256, 512, 1024):
-        out.append(
-            _run(
-                [
-                    "benchmarks/spyx_reference.py",
-                    f"--timesteps={timesteps}",
-                    f"--epochs={epochs}",
-                    f"--trials={trials}",
-                    "--skip-accuracy",
-                ],
-                "scaling",
+    for timesteps in [int(t) for t in timesteps_list.split(",")]:
+        if include_spyx:
+            out.append(
+                _run(
+                    [
+                        "benchmarks/spyx_reference.py",
+                        f"--timesteps={timesteps}",
+                        f"--epochs={epochs}",
+                        f"--trials={trials}",
+                        "--skip-accuracy",
+                    ],
+                    "scaling",
+                )
             )
-        )
         for variant in ("sequential", "parallel"):
             out.append(
                 _run(
@@ -178,10 +184,40 @@ def main(
     epochs: int = 100,
     trials: int = 5,
     variants: str = "sequential,parallel",
+    batches: str = "64,128,256",
+    timesteps: str = "256,512,1024",
+    include_spyx: bool = True,
+    spawn: bool = False,
 ) -> None:
+    """`--spawn` queues the run server-side and returns immediately.
+
+    `.remote()` blocks until the function returns, so the run dies with the client -- a
+    dropped connection or a shell that exits takes hours of GPU time with it. Results land on
+    the volume either way; with `--spawn` nothing local needs to stay alive to collect them.
+    """
     suites = {
         "accuracy": lambda: accuracy.remote(epochs=epochs, variants=variants),
-        "compare": lambda: compare.remote(epochs=epochs, trials=trials),
-        "scaling": lambda: scaling.remote(epochs=epochs, trials=trials),
+        "compare": lambda: compare.remote(epochs=epochs, trials=trials, batches=batches),
+        "scaling": lambda: scaling.remote(
+            epochs=epochs,
+            trials=trials,
+            timesteps_list=timesteps,
+            include_spyx=include_spyx,
+        ),
     }
+    if spawn:
+        fns = {"accuracy": accuracy, "compare": compare, "scaling": scaling}
+        kwargs = {
+            "accuracy": dict(epochs=epochs, variants=variants),
+            "compare": dict(epochs=epochs, trials=trials, batches=batches),
+            "scaling": dict(
+                epochs=epochs,
+                trials=trials,
+                timesteps_list=timesteps,
+                include_spyx=include_spyx,
+            ),
+        }[suite]
+        call = fns[suite].spawn(**kwargs)
+        print(f"queued {suite} as {call.object_id}; results land in the shd-data volume")
+        return
     print(suites[suite]())

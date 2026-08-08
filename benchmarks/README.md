@@ -429,3 +429,92 @@ parallel-in-time matches sequential to **2.4e-07** on the reset-free model (floa
 accumulation order, consistent with §4), checkpointed matches sequential exactly, and the
 reset-based model is **refused** by `unroll_parallel` by name rather than silently
 mis-computed.
+
+### Training speed, both libraries in one container on one T4
+
+Timings are 1 warm-up run plus 2 timed runs, reported as mean ± sd. Every ratio compares rows
+measured inside the same container; numbers from different containers are never divided,
+because Spyx's run-to-run spread on a T4 turned out to be large enough to invent a result
+(±21.6 s at batch 256, against jaxpike's ±0.4 s).
+
+**Batch size**, at T=256, hidden 128, 20 epochs:
+
+| batch | Spyx 0.1.19 | jaxpike sequential | jaxpike checkpointed | jaxpike parallel |
+|---:|---:|---:|---:|---:|
+| 64 | 110.1 ± 2.6 | 73.9 ± 0.7 (1.5×) | 93.7 ± 0.6 (1.2×) | **33.8 ± 0.0 (3.3×)** |
+| 128 | 89.4 ± 2.2 | 49.0 ± 0.9 (1.8×) | 59.5 ± 0.6 (1.5×) | 43.0 ± 0.4 (2.1×) |
+| 256 | 90.7 ± 21.6 | **38.2 ± 0.4 (2.4×)** | 40.1 ± 1.0 (2.3×) | 46.9 ± 1.9 (1.9×) |
+
+**Sequence length**, at batch 256, hidden 128, 10 epochs:
+
+| T | Spyx 0.1.19 | jaxpike sequential | jaxpike parallel | seq vs Spyx | par vs seq |
+|---:|---:|---:|---:|---:|---:|
+| 256 | 60.4 ± 0.1 | 23.1 ± 0.0 | 26.5 ± 0.0 | 2.6× | 0.87× |
+| 512 | 182.5 ± 9.5 | 45.7 ± 0.2 | 46.7 ± 1.0 | 4.0× | 0.98× |
+| 1,024 | 776.9 ± 35.8 | 98.4 ± 1.6 | **81.9 ± 1.0** | **7.9×** | **1.20×** |
+
+**jaxpike is faster everywhere measured, on the matched model, at full accuracy** — and the
+path doing the winning is the ordinary sequential one, not anything exotic.
+
+**The advantage compounds with sequence length: 2.6× → 4.0× → 7.9×.** Per doubling of `T`,
+Spyx costs 3.0× then 4.3× more while jaxpike costs 2.0× then 2.15×. That gap is structural
+rather than tuning: their benchmark uses `hk.static_unroll`, which materializes a graph
+proportional to `T`, where `lax.scan` compiles one loop body whatever `T` is.
+
+### Separating compile cost from throughput
+
+Solving the 10- and 20-epoch runs at batch 256 as two points on a line splits fixed from
+marginal cost:
+
+| | compile (fixed) | per epoch |
+|---|---:|---:|
+| Spyx | ~30 s | 3.04 s |
+| jaxpike | ~8 s | **1.51 s** |
+
+So the steady-state advantage is **2.0×**, and the larger headline ratios come from also
+compiling ~3.7× faster. Warm-up runs sit within ~2 s of steady state for both libraries, so
+compilation is not otherwise distorting the totals. Quoting the headline ratio without this
+split would overstate the throughput difference.
+
+### Parallel-in-time: a narrow win, and it has to buy its way in
+
+Against jaxpike's own sequential path the associative scan is **0.87× at T=256, 0.98× at
+T=512 and 1.20× at T=1024** — it crosses over around T≈512 — and separately it is 2.2× faster
+at batch 64. The mechanism is consistent: the scan performs roughly twice the work to buy
+`O(log T)` depth, which pays only when the GPU has lanes to spare, either because the batch
+is small or because the sequence is long.
+
+That win has to cover a 13-point accuracy loss from dropping reset, so at batch 256 and
+T=1024 a 1.20× speedup does not obviously pay for itself. The regime where it clearly does is
+small batches: 3.3× against Spyx at batch 64, where the accuracy cost is the only thing
+standing against it.
+
+### Memory, peak scratch as XLA plans it
+
+| variant | T=256 | T=1,024 |
+|---|---:|---:|
+| checkpointed | **28.9 MB** | — |
+| sequential | 206.9 MB | 812.9 MB |
+| parallel | 256.1 MB | 1,012.3 MB |
+
+`unroll_checkpointed` is the quiet result of this comparison: **7.2× less scratch than the
+sequential path at essentially the same speed** (40.1 s against 38.2 s at batch 256), and
+Spyx has no equivalent — their paper notes they could not report memory at all. Sequential
+scratch grows linearly in `T` as `O(T·B·N)` predicts, so at long sequences it is
+checkpointing rather than parallel-in-time that keeps a model on a 16 GB card. No checkpointed
+row was measured at T=1024, which in hindsight is the row most worth having.
+
+### What this comparison does and does not establish
+
+It establishes that jaxpike trains the same model faster than Spyx on the same GPU, by 1.5×
+to 7.9× depending on configuration, with the gap widening in `T`, and that it does so on the
+plain sequential path with no accuracy sacrifice.
+
+It does not establish that parallel-in-time is the reason. It is not: it wins only at small
+batch or long sequence, it costs 13 accuracy points, and Spyx 1.0.0 now ships its own
+associative-scan neuron. Nor does it establish anything about snnTorch, SpikingJelly or
+mlGeNN, none of which were re-run here.
+
+Every accuracy figure is a **single seed with no error bars**, and Spyx's timings are unstable
+on a T4 in a way jaxpike's are not — which is itself unexplained, and worth understanding
+before leaning on any specific ratio.
