@@ -21,6 +21,9 @@ from jaxtyping import Array, Float
 
 BATCHED, SCANNED = "batched", "scanned"
 
+# Timesteps emitted per time-loop iteration. Chosen by measurement; see benchmarks/README.md.
+SCAN_UNROLL = 1
+
 
 def _plan(net, input_shape: tuple[int, ...]) -> list[tuple[str, tuple[int, ...]]] | None:
     """Group a `Sequential`'s layers into maximal batched and scanned runs.
@@ -48,7 +51,7 @@ def _plan(net, input_shape: tuple[int, ...]) -> list[tuple[str, tuple[int, ...]]
     return [(kind, tuple(indices)) for kind, indices in plan]
 
 
-def _scan_segment(layers: tuple, carry: tuple, xs: Array):
+def _scan_segment(layers: tuple, carry: tuple, xs: Array, unroll_factor: int):
     """One `lax.scan` over time through a run of stateful layers."""
 
     def step(state, x):
@@ -58,10 +61,10 @@ def _scan_segment(layers: tuple, carry: tuple, xs: Array):
             new.append(s)
         return tuple(new), x
 
-    return jax.lax.scan(step, carry, xs)
+    return jax.lax.scan(step, carry, xs, unroll=unroll_factor)
 
 
-def _run_segmented(net, xs: Array, state, plan) -> tuple[object, Array]:
+def _run_segmented(net, xs: Array, state, plan, unroll_factor: int) -> tuple[object, Array]:
     """Apply the plan to `xs`. Returns `(state, outputs)`, the `lax.scan` carry convention."""
     new_state = list(state)
     for kind, indices in plan:
@@ -70,30 +73,49 @@ def _run_segmented(net, xs: Array, state, plan) -> tuple[object, Array]:
                 _, xs = net.layers[index].parallel_apply(None, xs)
         else:
             layers = tuple(net.layers[i] for i in indices)
-            carry, xs = _scan_segment(layers, tuple(state[i] for i in indices), xs)
+            carry, xs = _scan_segment(layers, tuple(state[i] for i in indices), xs, unroll_factor)
             for slot, index in enumerate(indices):
                 new_state[index] = carry[slot]
     return tuple(new_state), xs
 
 
-def unroll(net, xs: Float[Array, "T *rest"], state=None) -> tuple[Array, object]:
+def _scan_unroll(t: int, requested: int | None) -> int:
+    """How many timesteps to emit per loop iteration.
+
+    A neuron step is a handful of elementwise ops on `(batch, N)`; at realistic sizes the
+    kernel launch costs more than the arithmetic. Emitting several steps per iteration lets
+    XLA fuse them into one kernel. The gain flattens once the body is large enough to keep the
+    device busy, while compile time keeps growing, so this caps rather than scaling with T.
+    """
+    if requested is not None:
+        return max(1, min(requested, t))
+    return max(1, min(SCAN_UNROLL, t))
+
+
+def unroll(
+    net, xs: Float[Array, "T *rest"], state=None, *, scan_unroll: int | None = None
+) -> tuple[Array, object]:
     """Run `net` over the leading (time) axis of `xs`.
 
     Returns the per-timestep outputs stacked on the leading axis, plus the final state, so a
     long sequence can be processed in chunks by feeding the returned state back in.
+
+    `scan_unroll` overrides how many timesteps the time loop emits per iteration; it changes
+    compile time and speed, never results.
     """
     if state is None:
         state = net.init_state(xs.shape[1:])
 
+    factor = _scan_unroll(xs.shape[0], scan_unroll)
     plan = _plan(net, xs.shape[1:])
     if plan is not None:
-        final_state, ys = _run_segmented(net, xs, state, plan)
+        final_state, ys = _run_segmented(net, xs, state, plan, factor)
         return ys, final_state
 
     def step(carry, x):
         return net(carry, x)
 
-    final_state, ys = jax.lax.scan(step, state, xs)
+    final_state, ys = jax.lax.scan(step, state, xs, unroll=factor)
     return ys, final_state
 
 
@@ -109,7 +131,12 @@ def _best_chunk(t: int) -> int:
 
 
 def unroll_checkpointed(
-    net, xs: Float[Array, "T *rest"], state=None, chunk_size: int | None = None
+    net,
+    xs: Float[Array, "T *rest"],
+    state=None,
+    chunk_size: int | None = None,
+    *,
+    scan_unroll: int | None = None,
 ):
     """`unroll` with rematerialization: trades recomputation for memory.
 
@@ -130,14 +157,15 @@ def unroll_checkpointed(
 
     plan = _plan(net, xs.shape[1:])
     xs_chunked = xs.reshape(t // chunk, chunk, *xs.shape[1:])
+    factor = _scan_unroll(chunk, scan_unroll)
 
     if plan is not None:
-        run_chunk = jax.checkpoint(lambda carry, cxs: _run_segmented(net, cxs, carry, plan))
+        run_chunk = jax.checkpoint(lambda carry, cxs: _run_segmented(net, cxs, carry, plan, factor))
     else:
 
         @jax.checkpoint
         def run_chunk(carry, chunk_xs):
-            return jax.lax.scan(lambda c, x: net(c, x), carry, chunk_xs)
+            return jax.lax.scan(lambda c, x: net(c, x), carry, chunk_xs, unroll=factor)
 
     final_state, ys = jax.lax.scan(run_chunk, state, xs_chunked)
     return ys.reshape(t, *ys.shape[2:]), final_state

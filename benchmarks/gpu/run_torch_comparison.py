@@ -148,6 +148,16 @@ def scaling(epochs: int = 10, trials: int = 3, timesteps_list: str = "256,512,10
     return "\n".join(out)
 
 
+@app.function(gpu=GPU, timeout=2 * 60 * 60, volumes={"/root/data": CACHE})
+def scan_unroll(factors: str = "1,2,4,8,16,32,64", variant: str = "sequential") -> str:
+    """Calibrate how many timesteps the neuron loop should emit per iteration."""
+    return _run(
+        ["benchmarks/scan_unroll.py", f"--factors={factors}", f"--variant={variant}"],
+        "scan-unroll",
+        JAX_ENV,
+    )
+
+
 @app.function(gpu=GPU, timeout=60 * 60, volumes={"/root/data": CACHE})
 def smoke() -> str:
     """Cheap end-to-end check that every library imports, runs and trains on this image."""
@@ -179,6 +189,7 @@ def main(
 ) -> None:
     suites = {
         "smoke": lambda: smoke.remote(),
+        "scan-unroll": lambda: scan_unroll.remote(),
         "speed": lambda: speed.remote(epochs=epochs, trials=trials, batches=batches),
         "accuracy": lambda: accuracy.remote(epochs=epochs),
         "scaling": lambda: scaling.remote(epochs=epochs, trials=trials, timesteps_list=timesteps),
