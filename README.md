@@ -2,15 +2,49 @@
 
 Fast, flexible spiking neural networks in JAX.
 
-> **Status: pre-alpha.** Working library with a real result: **69.6% on Spiking Heidelberg
-> Digits** with a recurrent network, against a ~71% published recurrent baseline and ~48%
-> feedforward, trained in minutes on an NVIDIA T4 (epoch selected on a held-out validation
-> split, not on test). Parallel-in-time execution makes training **~2.5× faster end to end**
-> (17–21× on the isolated forward/backward pass) with bit-identical spike trains, and
-> rematerialization cuts BPTT memory **67×**. Everything is reproducible from
+> **Status: pre-alpha.** Working library, benchmarked head-to-head against a published
+> competitor. Reproducing [Spyx](https://arxiv.org/abs/2402.18994)'s SHD experiment under its
+> own protocol — same model, same data, same GPU, one container — jaxpike matches its accuracy
+> (**0.751** against a reported 0.70–0.75 band) and trains **1.5–7.9× faster**, with **7.2×
+> less** peak scratch memory on the rematerialized path. Everything is reproducible from
 > [`benchmarks/`](benchmarks/) and [`examples/`](examples/), including the unfavourable
-> results. Parallel-in-time requires reset-free neurons (`LinearLIF`); the general reset case
-> is measured, unsolved, and [written up](benchmarks/README.md).
+> results.
+
+## Against Spyx on SHD
+
+Both libraries in one container on one NVIDIA T4, fp32, bit-identical inputs. Spyx pinned to
+0.1.19, the release contemporary with its paper. Full protocol and caveats in
+[`benchmarks/README.md`](benchmarks/README.md).
+
+**Accuracy** — 100 epochs, batch 256, T=256, hidden 128:
+
+| model | test accuracy |
+|---|---:|
+| Spyx, as reported in the paper | 0.70 – 0.75 |
+| **jaxpike, matched model** | **0.751** |
+| jaxpike, reset-free (`unroll_parallel`) | 0.609 |
+
+**Training time**, batch 256, 20 epochs — and how it scales with sequence length:
+
+| T | Spyx | jaxpike sequential | jaxpike parallel | speedup |
+|---:|---:|---:|---:|---:|
+| 256 | 60.4 s | 23.1 s | 26.5 s | **2.6×** |
+| 512 | 182.5 s | 45.7 s | 46.7 s | **4.0×** |
+| 1,024 | 776.9 s | 98.4 s | **81.9 s** | **7.9×** |
+
+Splitting compile from throughput: Spyx takes ~30 s to compile and 3.04 s/epoch, jaxpike ~8 s
+and 1.51 s/epoch. The honest steady-state number is **2.0×**; the larger ratios at long `T`
+come from `hk.static_unroll` growing their graph with `T` where `lax.scan` does not.
+
+**Peak scratch memory**, T=256: `unroll_checkpointed` **28.9 MB** against 206.9 MB for the
+sequential path — 7.2× less, at sequential speed, with no equivalent in Spyx. At T=1,024 the
+sequential path already needs 813 MB, so on long sequences it is rematerialization rather
+than parallelism that keeps a model on a 16 GB card.
+
+Parallel-in-time is the weaker story than expected: it only overtakes the sequential path
+around T≈512, reaches 1.20× at T=1,024, and requires reset-free neurons that cost ~13 points
+of accuracy here. Spyx 1.0.0 ships its own associative-scan neuron, so it is not a
+differentiator. The win above is on the plain sequential path at full accuracy.
 
 ## Why another SNN library
 
