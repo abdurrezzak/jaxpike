@@ -104,3 +104,53 @@ def test_checkpointed_uses_less_scratch_memory():
 
     naive, ckpt = temp_bytes(unroll), temp_bytes(unroll_checkpointed)
     assert ckpt * 5 < naive, f"expected >=5x saving, got {naive / max(ckpt, 1):.1f}x"
+
+
+def unsegmented(runner):
+    """Force the pre-segmentation path by hiding the layer chain `_plan` looks for."""
+
+    def run(model, xs, state=None):
+        return runner(_Opaque(model), xs, state)
+
+    return run
+
+
+class _Opaque(eqx.Module):
+    """A network `_plan` cannot decompose, so it must be walked one timestep at a time."""
+
+    inner: eqx.Module
+
+    def init_state(self, input_shape):
+        return self.inner.init_state(input_shape)
+
+    def out_shape(self, input_shape):
+        return self.inner.out_shape(input_shape)
+
+    def __call__(self, state, x):
+        return self.inner(state, x)
+
+
+@pytest.mark.parametrize("runner", [unroll, unroll_checkpointed])
+def test_segmentation_is_bit_identical_to_walking_every_timestep(runner):
+    # Hoisting Dense out of the scan reassociates the arithmetic. It must not change it.
+    model, xs = net(), inputs()
+    fused, fused_state = runner(model, xs)
+    plain, plain_state = unsegmented(runner)(model, xs)
+    assert jnp.array_equal(fused, plain)
+    assert jnp.array_equal(fused_state[3].v, plain_state[3].v)
+
+
+@pytest.mark.parametrize("runner", [unroll, unroll_checkpointed])
+def test_segmentation_leaves_gradients_unchanged(runner):
+    model, xs = net(), inputs()
+    params, static = eqx.partition(model, eqx.is_inexact_array)
+
+    def grads(run):
+        def loss(p):
+            return jnp.sum(run(eqx.combine(p, static), xs)[0])
+
+        return jax.grad(loss)(params)
+
+    fused, plain = grads(runner), grads(unsegmented(runner))
+    for a, b in zip(jax.tree.leaves(fused), jax.tree.leaves(plain), strict=True):
+        assert jnp.allclose(a, b, rtol=1e-5, atol=1e-6)
