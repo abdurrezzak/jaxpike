@@ -158,7 +158,7 @@ def candidates(timesteps: int) -> list[Candidate]:
             Candidate(
                 f"remat-step-{factor}",
                 lambda m, xs, f=factor: jp.unroll(m, xs, scan_unroll=f, remat_step=True),
-                note=f"recompute the step in backward, {f} per iteration",
+                note=f"recompute the step in backward, {factor} per iteration",
             )
         )
     for chunk in sorted({c for c in (8, 16, 32, 64) if timesteps % c == 0}):
