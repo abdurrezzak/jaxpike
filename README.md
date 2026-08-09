@@ -2,49 +2,55 @@
 
 Fast, flexible spiking neural networks in JAX.
 
-> **Status: pre-alpha.** Working library, benchmarked head-to-head against a published
-> competitor. Reproducing [Spyx](https://arxiv.org/abs/2402.18994)'s SHD experiment under its
-> own protocol — same model, same data, same GPU, one container — jaxpike matches its accuracy
-> (**0.751** against a reported 0.70–0.75 band) and trains **1.5–7.9× faster**, with **7.2×
-> less** peak scratch memory on the rematerialized path. Everything is reproducible from
-> [`benchmarks/`](benchmarks/) and [`examples/`](examples/), including the unfavourable
-> results.
+> **Status: pre-alpha.** Working library, benchmarked head-to-head against every mainstream
+> SNN framework on one GPU in one container. jaxpike trains the same network **31–43× faster
+> than snnTorch and Norse** and uses **12× less memory than SpikingJelly**, but is **1.35×
+> slower than SpikingJelly's fused CuPy kernel**, which is not yet beaten. Everything is
+> reproducible from [`benchmarks/`](benchmarks/), including the unfavourable results, and
+> every optimization attempt — three of which measured as no improvement at all — is recorded
+> in [`OPTIMIZATION_LOG.md`](OPTIMIZATION_LOG.md).
 
-## Against Spyx on SHD
+## Benchmarks
 
-Both libraries in one container on one NVIDIA T4, fp32, bit-identical inputs. Spyx pinned to
-0.1.19, the release contemporary with its paper. Full protocol and caveats in
-[`benchmarks/README.md`](benchmarks/README.md).
+Every library installed side by side, training the identical network on identical arrays with
+the same optimizer, loss and dtype, on one NVIDIA T4. SHD, 128 channels, `Linear -> LIF ->
+Linear -> LIF -> Linear -> LI`, hidden 128, Adam 5e-4, fp32, 20 epochs at batch 256, T=256.
 
-**Accuracy** — 100 epochs, batch 256, T=256, hidden 128:
+| library | training time | peak memory |
+|---|---:|---:|
+| SpikingJelly 0.0.0.0.14, multi-step + **CuPy** | **6.02 s** | 792.1 MB |
+| **jaxpike, `unroll`** | **8.12 s** | 324.5 MB |
+| **jaxpike, `unroll_checkpointed`** | 11.07 s | **64.2 MB** |
+| jaxpike, `unroll_parallel` | 15.80 s | 288.1 MB |
+| Norse 1.1.0 | 252.21 s | 737.3 MB |
+| SpikingJelly, Torch backend | 260.62 s | 696.3 MB |
+| snnTorch 1.0.0 | 347.18 s | 675.8 MB |
 
-| model | test accuracy |
-|---|---:|
-| Spyx, as reported in the paper | 0.70 – 0.75 |
-| **jaxpike, matched model** | **0.751** |
-| jaxpike, reset-free (`unroll_parallel`) | 0.609 |
+jaxpike times are steady state; compilation is a further ~14 s paid once, which the PyTorch
+libraries do not pay at all. Three concessions go to the competition on purpose: their leaky
+readout is evaluated in closed form rather than looped, SpikingJelly gets its fastest
+documented path with the backend verified at runtime rather than assumed, and each library
+keeps its native decay parameterization.
 
-**Training time**, batch 256, 20 epochs — and how it scales with sequence length:
+**Accuracy is matched**, not traded away — 0.751 on SHD under Spyx's published protocol,
+against their reported 0.70–0.75 band.
 
-| T | Spyx | jaxpike sequential | jaxpike parallel | speedup |
-|---:|---:|---:|---:|---:|
-| 256 | 60.4 s | 23.1 s | 26.5 s | **2.6×** |
-| 512 | 182.5 s | 45.7 s | 46.7 s | **4.0×** |
-| 1,024 | 776.9 s | 98.4 s | **81.9 s** | **7.9×** |
+**Where jaxpike wins:** anything running a Python loop over timesteps loses by more than an
+order of magnitude, and that is most of the field. `unroll_checkpointed` holds a 256-step BPTT
+graph in 64 MB where SpikingJelly needs 792 MB, which is the difference between fitting a
+model on a 16 GB card and not.
 
-Splitting compile from throughput: Spyx takes ~30 s to compile and 3.04 s/epoch, jaxpike ~8 s
-and 1.51 s/epoch. The honest steady-state number is **2.0×**; the larger ratios at long `T`
-come from `hk.static_unroll` growing their graph with `T` where `lax.scan` does not.
+**Where it loses:** SpikingJelly's hand-written CUDA kernel fuses the whole time loop into one
+launch. Ablation puts 83% of a jaxpike training step in the neuron loops and 71% in the
+backward pass; the GEMMs are already a single large dot. Closing that needs a fused kernel of
+our own, which is what [Pallas](https://docs.jax.dev/en/latest/pallas/index.html) is for and
+what this library was founded to generate — but Pallas requires compute capability 8.0+, and
+the largest GPU available to this project is a T4 at 7.5. **The founding thesis is untested,
+not disproven.**
 
-**Peak scratch memory**, T=256: `unroll_checkpointed` **28.9 MB** against 206.9 MB for the
-sequential path — 7.2× less, at sequential speed, with no equivalent in Spyx. At T=1,024 the
-sequential path already needs 813 MB, so on long sequences it is rematerialization rather
-than parallelism that keeps a model on a 16 GB card.
-
-Parallel-in-time is the weaker story than expected: it only overtakes the sequential path
-around T≈512, reaches 1.20× at T=1,024, and requires reset-free neurons that cost ~13 points
-of accuracy here. Spyx 1.0.0 ships its own associative-scan neuron, so it is not a
-differentiator. The win above is on the plain sequential path at full accuracy.
+Parallel-in-time turned out to be the weakest of the three paths: it only overtakes sequential
+around T≈512 and needs reset-free neurons that cost ~13 accuracy points here. Spyx 1.0.0 ships
+its own associative-scan neuron, so it is not a differentiator either.
 
 ## Why another SNN library
 

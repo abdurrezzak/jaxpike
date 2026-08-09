@@ -333,6 +333,14 @@ method exists for. Only measuring memory caught it.
 
 ## Head-to-head against Spyx on SHD — 2026-08-04, NVIDIA T4 (Modal)
 
+> **Superseded. Every jaxpike timing in this section is inflated.** `train()` built its jitted
+> function inside the call, so each timed trial missed JAX's compilation cache and re-paid the
+> full compile — roughly 15 s of a 22 s measurement. Fixed in `6488725`; under the corrected
+> protocol the same configuration runs in 8.12 s rather than 22.20 s. Spyx's own benchmark code
+> re-jits the same way, so the *relative* comparison below is closer to fair than the absolute
+> numbers are, but neither should be quoted. The Spyx comparison has not been re-run. See
+> [`OPTIMIZATION_LOG.md`](../OPTIMIZATION_LOG.md) for the current numbers and the full account.
+
 Spyx is the closest competitor: also JAX, also JIT-compiled, also benchmarked on SHD. Table 1
 of [arXiv 2402.18994](https://arxiv.org/abs/2402.18994) reports 100-epoch training times for
 Spyx, snnTorch and mlGeNN, which makes it the one published comparison that can be contested
