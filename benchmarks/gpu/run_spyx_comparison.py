@@ -50,8 +50,8 @@ def _run(cmd: list[str], tag: str = "run") -> str:
     """Run one benchmark and append its output to the shared volume immediately.
 
     `modal run` blocks on the result, so a dropped client connection kills the call and takes
-    every buffered result with it -- which is how the first attempt at this grid was lost.
-    Writing each result to the volume as it lands makes the run recoverable.
+    every buffered result with it. Writing each result to the volume as it lands makes a run
+    recoverable.
     """
     import pathlib
     import subprocess

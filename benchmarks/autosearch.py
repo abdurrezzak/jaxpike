@@ -1,26 +1,22 @@
 """Automated optimization search over execution strategies.
 
-Every candidate is a way of running the same network. The loop is deliberately dumb and
-strict, because the failure mode of hand-tuned performance work is believing a speedup that
-either did not happen or was not free:
+Each candidate is a different way of running the same network, and is admitted only if it
+survives four rules:
 
-    1. Correctness gate first. A candidate is compared against the reference implementation on
-       outputs *and* gradients, and is rejected outright if it disagrees by more than its
-       declared tolerance. Whether it was *bit*-identical is reported separately, because
-       reassociation inside a fused loop body perturbs results at around 1e-9 -- harmless, but
-       not nothing, and worth never claiming otherwise.
-    2. Then measurement, in a subprocess of its own, paired with a reference measured in the
-       same subprocess. Two attempts at this were wrong before it worked: sharing one process
-       across candidates let held-open reference arrays and accumulated models inflate every
-       later timing by ~30%, and even a paired reference could not undo that. What is recorded
-       is a ratio taken under conditions the candidate itself created.
-    3. Compile and steady state stay separate, because they are paid on different schedules and
-       only one of them is what a training run spends its time on.
-    4. Then ranking, including the losers. A search that records only its wins cannot tell you
-       what has already been ruled out.
+1. **Correctness gates timing.** A candidate is compared against the reference on outputs
+   *and* gradients and rejected if it disagrees by more than its declared tolerance. Whether
+   it was bit-identical is reported separately: reassociation inside a fused loop body
+   perturbs results at around 1e-9, which is harmless but is not zero.
+2. **Each candidate is measured in its own process**, against a reference timed on either side
+   of it. Sharing one interpreter lets held-open arrays and accumulated models inflate later
+   timings by ~30%, and a paired reference cannot correct for a device that degraded under
+   both.
+3. **Compile and steady state are reported separately.** They are paid on different schedules
+   and only one is what a training run spends its time on.
+4. **The reference is timed against itself** and the result published as a noise floor.
+   Candidates inside it are reported as ties rather than ranked.
 
-Results are written as JSON so a later run can compare against an earlier one rather than
-against memory.
+Results are written as JSON so that a later run compares against an earlier one.
 
     PYTHONPATH=. python benchmarks/autosearch.py --out results/autosearch.json
 """
@@ -96,8 +92,8 @@ class Passthrough(eqx.Module):
 def ablate(model, *, drop: str):
     """The same network with one class of layer replaced by a passthrough.
 
-    Timing tells you how long a step takes. It does not tell you where the time went, and on a
-    network of three GEMMs and three neuron loops the answer decides what to optimize next.
+    Timing a step says how long it takes, not where the time went. Subtracting one class of
+    layer at a time localizes the cost.
     """
     layers = []
     for layer in model.layers:
@@ -226,9 +222,8 @@ def measure(candidate: Candidate, model, xs, labels, repeats: int) -> tuple[floa
     jax.block_until_ready(out)
     compile_seconds = time.perf_counter() - start
 
-    # A GPU idles at a low clock and takes about a second of sustained load to boost. Timing
-    # from a cold start measures the clock ramp, which is how a fresh process per candidate
-    # ended up noisier than sharing one.
+    # A GPU idles at a low clock and needs sustained load to boost; timing from cold
+    # measures the clock ramp rather than the kernel.
     deadline = time.perf_counter() + WARM_UP_SECONDS
     while time.perf_counter() < deadline:
         jax.block_until_ready(compiled(params, opt_state, xs, labels))
@@ -241,8 +236,7 @@ def measure(candidate: Candidate, model, xs, labels, repeats: int) -> tuple[floa
         times.append(time.perf_counter() - start)
 
     scratch = compile_stats(step, params, opt_state, xs, labels)["temp_bytes"]
-    # The minimum is the run least contaminated by scheduling and thermal interference; a
-    # median still averages in whatever the device was doing to us at the time.
+    # The minimum is the sample least contaminated by scheduling and thermal interference.
     return compile_seconds, float(np.min(times)) * 1e3, scratch / 2**20
 
 
@@ -273,8 +267,7 @@ def search(args) -> list[Result]:
             result.ok = False
             result.error = f"disagrees with reference by {worst:.3e}"
 
-    # The reference is timed on either side of the candidate, in this same process, so the
-    # ratio reflects the device as the candidate found it.
+    # Timed on either side of the candidate so the ratio reflects the device as it was.
     reference_model = model_for(baseline.neuron)
     _, before, _ = measure(baseline, reference_model, xs, labels, args.repeats)
     result.compile_seconds, result.step_ms, result.scratch_mb = measure(
@@ -347,8 +340,7 @@ def main() -> None:
     accepted = [r for r in results if r.ok and r.speedup is not None]
     accepted.sort(key=lambda r: -r.speedup)
 
-    # The reference measured against itself is the noise floor. Anything inside it is a tie,
-    # and calling a tie a win is how performance work accumulates fiction.
+    # The reference measured against itself bounds what a ratio can mean.
     self_ratio = next((r.speedup for r in results if r.name == REFERENCE), 1.0)
     floor = abs(self_ratio - 1.0)
     print(f"\nnoise floor (reference against itself): {floor:.1%}")

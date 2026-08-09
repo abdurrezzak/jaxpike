@@ -17,6 +17,7 @@ coverage.xml
 # Internal working documents: strategy and engineering handoff notes, kept locally.
 PLAN.md
 HANDOFF.md
+OPTIMIZATION_LOG.md
 
 # Datasets are downloaded on demand by jaxpike.data, never versioned.
 data/

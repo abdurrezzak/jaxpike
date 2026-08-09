@@ -2,13 +2,11 @@
 
 Fast, flexible spiking neural networks in JAX.
 
-> **Status: pre-alpha.** Working library, benchmarked head-to-head against every mainstream
-> SNN framework on one GPU in one container. jaxpike trains the same network **31–43× faster
-> than snnTorch and Norse** and uses **12× less memory than SpikingJelly**, but is **1.35×
-> slower than SpikingJelly's fused CuPy kernel**, which is not yet beaten. Everything is
-> reproducible from [`benchmarks/`](benchmarks/), including the unfavourable results, and
-> every optimization attempt — three of which measured as no improvement at all — is recorded
-> in [`OPTIMIZATION_LOG.md`](OPTIMIZATION_LOG.md).
+> **Status: pre-alpha.** Benchmarked head-to-head against every mainstream SNN framework on one
+> GPU in one container. jaxpike trains the same network **31–43× faster than snnTorch and
+> Norse** at **12× less memory than SpikingJelly**, and is **1.35× slower than SpikingJelly's
+> fused CuPy kernel**, which is not yet beaten. Everything is reproducible from
+> [`benchmarks/`](benchmarks/), unfavourable results included.
 
 ## Benchmarks
 
@@ -237,7 +235,7 @@ from jaxpike import viz
 
 viz.raster(spikes)  # the canonical SNN plot
 viz.membrane(voltages, spikes=spikes, threshold=1.0)
-viz.layer_rates_from(net, xs)  # is my network silent?
+viz.layer_rates_from(net, xs)  # check for silent layers
 viz.rate_heatmap(spikes)
 viz.weights(net.layers[0].weight)
 ```

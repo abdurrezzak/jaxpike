@@ -1,12 +1,13 @@
-"""Can a fused time-loop kernel beat `lax.scan` on the LIF recurrence?
+"""Does a fused time-loop kernel beat `lax.scan` on the LIF recurrence?
 
-This is the question the library was founded on, asked as cheaply as possible. The ablation
-puts 83% of an SHD training step in the neuron loops, and `lax.scan` runs them as T/unroll
-separate kernel launches with every intermediate round-tripping through HBM. A Pallas kernel
-loops over time inside one launch with the membrane held in registers.
+83% of an SHD training step is neuron loops, which `lax.scan` runs as T/unroll kernel launches
+with every intermediate round-tripping through HBM. A Pallas kernel walks time inside a single
+launch with the membrane resident in registers.
 
-Forward only, one neuron layer, no gradients: enough to tell whether the approach is worth
-building out, and not one line more than that.
+Forward only, one layer, no gradients -- the smallest experiment that answers the question.
+
+Requires compute capability 8.0 or higher: the Triton backend refuses sm_75 and the Mosaic GPU
+backend targets Hopper.
 
     PYTHONPATH=. python benchmarks/pallas_probe.py --batch 256 --neurons 128 --timesteps 256
 """
@@ -49,16 +50,13 @@ def _lif_kernel(x_ref, s_ref, *, timesteps: int, alpha: float, threshold: float,
 def pallas_lif(x, *, alpha: float, threshold: float, block: int = 256):
     """`x` is (T, rows); returns spikes of the same shape.
 
-    A `BlockSpec` with a shape stages that whole tile in shared memory, which for a (T, block)
-    tile means the entire sequence -- 512 KB against a 64 KB budget at T=256. The tile here is
-    left in global memory and one row is loaded per timestep, which is all the recurrence ever
-    needs live.
+    The tile stays in global memory and one row is loaded per timestep, which is all the
+    recurrence needs live; a shaped `BlockSpec` would stage the entire sequence in SMEM.
     """
     timesteps, rows = x.shape
     if rows % block:
         raise ValueError(f"{rows} rows is not divisible by block {block}")
-    # Triton rather than Mosaic GPU: Mosaic targets Hopper and cannot lower this kernel on the
-    # sm_75 card these benchmarks run on.
+    # Triton rather than Mosaic GPU, which targets Hopper.
     spec = pl.BlockSpec(memory_space=pl.ANY)
     return pl.pallas_call(
         functools.partial(
@@ -118,8 +116,8 @@ def main() -> None:
     scan_ms = timed(scan, x, args.repeats)
     print(f"lax.scan(unroll=8): {scan_ms:.3f} ms")
 
-    # A BlockSpec stages its whole tile in shared memory, so the neuron block is bounded by
-    # 64 KB / (T * 4 bytes * 2 buffers) -- 32 columns at T=256. Sweeping rather than assuming.
+    # A BlockSpec stages its whole tile in shared memory, bounding the block at
+    # 64 KB / (T * 4 bytes * 2 buffers).
     for block in [int(b) for b in args.blocks.split(",")]:
         if rows % block:
             continue

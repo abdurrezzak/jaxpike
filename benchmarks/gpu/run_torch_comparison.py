@@ -177,7 +177,7 @@ def jaxpike(
     batches: str = "64,128,256",
     variants: str = "sequential,checkpointed,parallel",
 ) -> str:
-    """Re-measure only our side. The PyTorch rows cost minutes each and do not move."""
+    """Re-measure the jaxpike rows alone; the PyTorch rows cost minutes each."""
     out = []
     for batch in [int(b) for b in batches.split(",")]:
         common = [f"--hidden={hidden}", f"--batch={batch}", f"--epochs={epochs}"]
@@ -205,7 +205,7 @@ def autosearch(batch: int = 256, timesteps: int = 256, hidden: int = 128) -> str
 
 @app.function(gpu=GPU, timeout=60 * 60, volumes={"/root/data": CACHE})
 def pallas(batch: int = 256, neurons: int = 128, timesteps: int = 256) -> str:
-    """Does a fused time-loop kernel beat lax.scan? The thesis, asked directly."""
+    """Does a fused time-loop kernel beat lax.scan?"""
     return _run(
         [
             "benchmarks/pallas_probe.py",

@@ -331,198 +331,106 @@ method exists for. Only measuring memory caught it.
 
 ---
 
-## Head-to-head against Spyx on SHD — 2026-08-04, NVIDIA T4 (Modal)
+## Framework comparison on SHD — 2026-08-09, NVIDIA T4 (Modal)
 
-> **Superseded. Every jaxpike timing in this section is inflated.** `train()` built its jitted
-> function inside the call, so each timed trial missed JAX's compilation cache and re-paid the
-> full compile — roughly 15 s of a 22 s measurement. Fixed in `6488725`; under the corrected
-> protocol the same configuration runs in 8.12 s rather than 22.20 s. Spyx's own benchmark code
-> re-jits the same way, so the *relative* comparison below is closer to fair than the absolute
-> numbers are, but neither should be quoted. The Spyx comparison has not been re-run. See
-> [`OPTIMIZATION_LOG.md`](../OPTIMIZATION_LOG.md) for the current numbers and the full account.
+Every framework installed side by side and run in one container on one GPU, each in its own
+subprocess so that no library is measured while another holds device memory. Published numbers
+measured on other hardware are context, never evidence, so every figure here was re-measured.
 
-Spyx is the closest competitor: also JAX, also JIT-compiled, also benchmarked on SHD. Table 1
-of [arXiv 2402.18994](https://arxiv.org/abs/2402.18994) reports 100-epoch training times for
-Spyx, snnTorch and mlGeNN, which makes it the one published comparison that can be contested
-without a PyTorch-versus-JAX confound.
+### Protocol
 
-### Why these runs re-measure Spyx instead of quoting their table
+`Linear(128, 128) -> LIF -> Linear(128, 128) -> LIF -> Linear(128, 20) -> LI`, no biases,
+Adam at 5e-4, cross-entropy on the time-integrated readout with 0.3 label smoothing, fp32,
+20 epochs at batch 256, T=256. Every framework receives bit-identical input arrays.
 
-Their numbers are an **RTX A6000 with 48 GB**. Ours are a **T4 with 16 GB**, the largest GPU
-Modal's free tier allows. Quoting one beside the other would compare hardware. So
-`benchmarks/gpu/run_spyx_comparison.py` installs both libraries in **one container** and runs
-them on **one GPU**, and `benchmarks/spyx_reference.py` is Spyx's own benchmark code from
-`research/paper/SHD_jax.ipynb` rather than a re-implementation, pinned to `spyx==0.1.19` —
-the release contemporary with the paper. Later Spyx moved to Flax NNX and that API no longer
-exists. Both libraries receive bit-identical input arrays, so neither pays a loader cost the
-other avoids.
+| framework | version | path exercised |
+|---|---|---|
+| jaxpike | this repo | `unroll`, `unroll_checkpointed`, `unroll_parallel` |
+| SpikingJelly | 0.0.0.0.14 | multi-step, CuPy fused kernels |
+| snnTorch | 1.0.0 | `snn.Leaky`, Python time loop |
+| Norse | 1.1.0 | `LIFCell`, Python time loop |
 
-### The protocol, taken from their notebook rather than the paper prose
+Three deliberate concessions to the competition, so that a favourable result cannot be
+dismissed as a rigged harness:
 
-SHD downsampled to **128 input channels** at **256 timesteps**, binary-rasterized;
-`Linear(128, H) -> LIF -> Linear(H, H) -> LIF -> Linear(H, 20) -> LI`, all Linear layers
-biasless; Adam at 5e-4; integral cross-entropy with 0.3 label smoothing; 100 epochs; fp32;
-the whole dataset staged on the accelerator, with epochs and batches both `lax.scan`.
+1. The leaky readout is evaluated in closed form for the PyTorch models. `sum_t v[t]` is
+   linear in its input, so it collapses to a weighted sum over time — exact, and it spares
+   them a 256-iteration Python loop that JAX fuses away.
+2. SpikingJelly runs its fastest documented configuration, and the CuPy backend is verified at
+   runtime rather than assumed: `SpikingJellyNet.check_backend` raises if it has silently
+   fallen back to the Torch backend, which it otherwise does.
+3. Each framework keeps its native decay parameterization rather than being forced to match.
 
-Their LIF is **not** jaxpike's `LIF`, and substituting one would have measured the model
-rather than the implementation. Two differences matter: the spike is read from the membrane
-*before* this step's input, so it lags a timestep, and the input carries no `(1 - alpha)`
-normalization, so weights are not in threshold units. `benchmarks/spyx_shd.py` therefore
-implements `SpyxLIF`, `SpyxLinearLIF`, `SpyxLI` and their arctan surrogate directly against
-the state contract.
+### Training time and memory
 
-### Accuracy against Spyx: matched model, matched result
+| framework | 20 epochs | peak memory |
+|---|---:|---:|
+| SpikingJelly, multi-step + CuPy | **6.02 ± 0.00 s** | 792.1 MB |
+| **jaxpike, `unroll`** | **8.12 ± 0.02 s** | 324.5 MB |
+| **jaxpike, `unroll_checkpointed`** | 11.07 ± 0.02 s | **64.2 MB** |
+| jaxpike, `unroll_parallel` | 15.80 ± 0.02 s | 288.1 MB |
+| Norse | 252.21 ± 8.33 s | 737.3 MB |
+| SpikingJelly, Torch backend | 260.62 ± 1.32 s | 696.3 MB |
+| snnTorch | 347.18 ± 17.52 s | 675.8 MB |
 
-Like for like — both models have reset, both run the same protocol:
+jaxpike figures are steady state; compilation costs a further 14–19 s, paid once per shape,
+and the PyTorch frameworks pay nothing equivalent. Memory is XLA's planned peak scratch for
+jaxpike and `torch.cuda.max_memory_allocated` for the others; the two instruments are not
+identical and the comparison should be read as an order of magnitude, not a ratio.
 
-| | test accuracy |
+Anything that steps through time in Python loses by 31–43×, which is most of the field.
+SpikingJelly's fused CuPy kernel is **1.35× faster than the best jaxpike path** and is not
+beaten here.
+
+### Accuracy
+
+100 epochs, batch 256, T=256, hidden 128, single seed.
+
+| model | test accuracy |
 |---|---:|
-| Spyx, as reported in the paper | 0.70 – 0.75 |
-| **jaxpike, matched model (`SpyxLIF`)** | **0.751** |
+| Spyx, as reported in arXiv 2402.18994 | 0.70 – 0.75 |
+| jaxpike, matched model | **0.751** |
+| jaxpike, reset-free neuron (`unroll_parallel`) | 0.609 |
 
-jaxpike's own `examples/shd.py` scores 0.626 feedforward, but that is a *different
-experiment*, not a worse library: 700 input channels, a single `tau=20`, threshold 0.5 and
-AdamW at 2e-3. Spyx's benchmark downsamples to 128 channels and learns a per-neuron `beta`
-initialized around 0.5 — a much leakier, heterogeneous membrane. Matching the specification
-closed the gap outright.
+Reset costs roughly 13 accuracy points on this task, which is the price of the parallel-in-time
+path and the reason it is not the default.
 
-### What reset costs, measured separately
+### Where the remaining gap is
 
-This is a jaxpike-internal ablation with **no Spyx counterpart** — the benchmarked release
-(0.1.19) ships no reset-free neuron. It is reported apart from the table above because reset
-is what the parallel-in-time path cannot have, so it prices the fast path:
+Ablation of a single training step, obtained by replacing one class of layer with a
+passthrough:
 
-| model | test accuracy | layer firing rates |
-|---|---:|---|
-| `SpyxLIF` — with reset, sequential only | **0.751** | — |
-| `SpyxPSU` — reset-free, integrate-then-spike, parallel | 0.609 | 0.090, 0.065 |
-| `SpyxLinearLIF` — reset-free with the spike lag kept, parallel | 0.627 | 0.091, 0.067 |
-
-**Removing reset costs about 13 accuracy points here, and two obvious explanations are both
-wrong.**
-
-*Not saturation.* The standard reset-free failure is a neuron that cannot depress itself,
-fires every step, and lands where the surrogate gradient is flat. Measured rates are 6–9%,
-comfortably inside the healthy band — the networks are not saturated, they are simply less
-discriminative.
-
-*Not a spike-timing artifact.* The first ablation removed reset but kept Spyx's one-step spike
-lag, so it also discarded the current step's input; `SpyxPSU` integrates before spiking, which
-is how Spyx's own `PSU_LIF` and jaxpike's `LinearLIF` are written. Correcting it did not
-recover the points — it scored 1.8 points *lower*, which on a single seed is noise.
-
-So the cost looks like a genuine property of the model rather than an implementation detail,
-which agrees with Spyx's own description of their `PSU_LIF`: "removing the reset is a
-deliberate accuracy/parallelism trade-off". **Any speed number taken from a reset-free row has
-to carry this accuracy alongside it.**
-
-Two caveats. These are **single-seed runs with no error bars**, so differences of a couple of
-points mean nothing. And no hyperparameter search was run for the reset-free variants — they
-inherit a threshold and `beta` initialization tuned by Spyx for a neuron that resets, and the
-PSN literature does reach strong SHD accuracy with reset-free neurons, so the gap may narrow
-under a search that has not been done.
-
-### Parallel-in-time is no longer a unique differentiator
-
-Spyx 1.0.0 ships `PSU_LIF` and `AssociativeLIF`: a reset-free neuron evaluated with
-`jax.lax.associative_scan` in `O(log T)` depth, marked experimental. It is absent from 0.1.19,
-the release the paper benchmarked, so the reproduction above is unaffected — but as of their
-current release the reset-free parallel-scan idea is implemented on both sides, and any claim
-that jaxpike alone has it would be false.
-
-### Correctness of the ported model
-
-Checked before any timing was recorded, since a fast wrong answer is worth nothing:
-parallel-in-time matches sequential to **2.4e-07** on the reset-free model (float32
-accumulation order, consistent with §4), checkpointed matches sequential exactly, and the
-reset-based model is **refused** by `unroll_parallel` by name rather than silently
-mis-computed.
-
-### Training speed, both libraries in one container on one T4
-
-Timings are 1 warm-up run plus 2 timed runs, reported as mean ± sd. Every ratio compares rows
-measured inside the same container; numbers from different containers are never divided,
-because Spyx's run-to-run spread on a T4 turned out to be large enough to invent a result
-(±21.6 s at batch 256, against jaxpike's ±0.4 s).
-
-**Batch size**, at T=256, hidden 128, 20 epochs:
-
-| batch | Spyx 0.1.19 | jaxpike sequential | jaxpike checkpointed | jaxpike parallel |
-|---:|---:|---:|---:|---:|
-| 64 | 110.1 ± 2.6 | 73.9 ± 0.7 (1.5×) | 93.7 ± 0.6 (1.2×) | **33.8 ± 0.0 (3.3×)** |
-| 128 | 89.4 ± 2.2 | 49.0 ± 0.9 (1.8×) | 59.5 ± 0.6 (1.5×) | 43.0 ± 0.4 (2.1×) |
-| 256 | 90.7 ± 21.6 | **38.2 ± 0.4 (2.4×)** | 40.1 ± 1.0 (2.3×) | 46.9 ± 1.9 (1.9×) |
-
-**Sequence length**, at batch 256, hidden 128, 10 epochs:
-
-| T | Spyx 0.1.19 | jaxpike sequential | jaxpike parallel | seq vs Spyx | par vs seq |
-|---:|---:|---:|---:|---:|---:|
-| 256 | 60.4 ± 0.1 | 23.1 ± 0.0 | 26.5 ± 0.0 | 2.6× | 0.87× |
-| 512 | 182.5 ± 9.5 | 45.7 ± 0.2 | 46.7 ± 1.0 | 4.0× | 0.98× |
-| 1,024 | 776.9 ± 35.8 | 98.4 ± 1.6 | **81.9 ± 1.0** | **7.9×** | **1.20×** |
-
-**jaxpike is faster everywhere measured, on the matched model, at full accuracy** — and the
-path doing the winning is the ordinary sequential one, not anything exotic.
-
-**The advantage compounds with sequence length: 2.6× → 4.0× → 7.9×.** Per doubling of `T`,
-Spyx costs 3.0× then 4.3× more while jaxpike costs 2.0× then 2.15×. That gap is structural
-rather than tuning: their benchmark uses `hk.static_unroll`, which materializes a graph
-proportional to `T`, where `lax.scan` compiles one loop body whatever `T` is.
-
-### Separating compile cost from throughput
-
-Solving the 10- and 20-epoch runs at batch 256 as two points on a line splits fixed from
-marginal cost:
-
-| | compile (fixed) | per epoch |
+| probe | time | share of step |
 |---|---:|---:|
-| Spyx | ~30 s | 3.04 s |
-| jaxpike | ~8 s | **1.51 s** |
+| full step | 12.19 ms | 100% |
+| forward only | 3.55 ms | 29% |
+| GEMMs only, forward and backward | 3.74 ms | 31% |
+| neuron loops only, forward and backward | 10.12 ms | 83% |
 
-So the steady-state advantage is **2.0×**, and the larger headline ratios come from also
-compiling ~3.7× faster. Warm-up runs sit within ~2 s of steady state for both libraries, so
-compilation is not otherwise distorting the totals. Quoting the headline ratio without this
-split would overstate the throughput difference.
+The hoisted `Dense` layers compile to a single `f32[65536,128]` dot, confirmed in the emitted
+HLO, so the matrix multiplications are not the problem. **83% of a step is the neuron time
+loop and 71% is the backward pass.** A single LIF layer's forward takes 0.832 ms against a
+bandwidth floor of about 0.34 ms for the 67 MB it must move, so roughly 2× of headroom sits
+there — close to the size of the gap.
 
-### Parallel-in-time: a narrow win, and it has to buy its way in
+Capturing it requires fusing the time loop into one kernel, which is what
+[Pallas](https://docs.jax.dev/en/latest/pallas/index.html) exists for. That is untested:
+Pallas requires compute capability 8.0 or higher, its Triton backend refuses sm_75 outright,
+and its Mosaic GPU backend targets Hopper. The T4 used throughout these benchmarks is sm_75.
 
-Against jaxpike's own sequential path the associative scan is **0.87× at T=256, 0.98× at
-T=512 and 1.20× at T=1024** — it crosses over around T≈512 — and separately it is 2.2× faster
-at batch 64. The mechanism is consistent: the scan performs roughly twice the work to buy
-`O(log T)` depth, which pays only when the GPU has lanes to spare, either because the batch
-is small or because the sequence is long.
+### What is exhausted, and what is not
 
-That win has to cover a 13-point accuracy loss from dropping reset, so at batch 256 and
-T=1024 a 1.20× speedup does not obviously pay for itself. The regime where it clearly does is
-small batches: 3.3× against Spyx at batch 64, where the accuracy cost is the only thing
-standing against it.
+An automated search over execution strategies — every scan-unroll factor, every checkpoint
+chunk size, and per-step rematerialization, each gated on agreeing with the reference in both
+outputs and gradients before being timed — finds no configuration that beats the default. With
+a 0.9% noise floor, everything except `unroll=1` and the parallel path is a statistical tie.
+Further speed requires new code, not new settings.
 
-### Memory, peak scratch as XLA plans it
+Three optimizations that were expected to help and did not, recorded because a benchmark suite
+that reports only its wins is marketing:
 
-| variant | T=256 | T=1,024 |
-|---|---:|---:|
-| checkpointed | **28.9 MB** | — |
-| sequential | 206.9 MB | 812.9 MB |
-| parallel | 256.1 MB | 1,012.3 MB |
-
-`unroll_checkpointed` is the quiet result of this comparison: **7.2× less scratch than the
-sequential path at essentially the same speed** (40.1 s against 38.2 s at batch 256), and
-Spyx has no equivalent — their paper notes they could not report memory at all. Sequential
-scratch grows linearly in `T` as `O(T·B·N)` predicts, so at long sequences it is
-checkpointing rather than parallel-in-time that keeps a model on a 16 GB card. No checkpointed
-row was measured at T=1024, which in hindsight is the row most worth having.
-
-### What this comparison does and does not establish
-
-It establishes that jaxpike trains the same model faster than Spyx on the same GPU, by 1.5×
-to 7.9× depending on configuration, with the gap widening in `T`, and that it does so on the
-plain sequential path with no accuracy sacrifice.
-
-It does not establish that parallel-in-time is the reason. It is not: it wins only at small
-batch or long sequence, it costs 13 accuracy points, and Spyx 1.0.0 now ships its own
-associative-scan neuron. Nor does it establish anything about snnTorch, SpikingJelly or
-mlGeNN, none of which were re-run here.
-
-Every accuracy figure is a **single seed with no error bars**, and Spyx's timings are unstable
-on a T4 in a way jaxpike's are not — which is itself unexplained, and worth understanding
-before leaning on any specific ratio.
+| change | expectation | measured |
+|---|---|---|
+| cast inputs per batch rather than per epoch | remove a 1.07 GB buffer | no change |
+| skip the surrogate relaxation in the forward pass | remove 16.7M transcendentals | no change |
+| recompute the neuron step instead of storing residuals | less memory traffic | 0.91×, but 22% less scratch |

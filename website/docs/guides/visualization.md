@@ -19,7 +19,7 @@ from jaxpike import viz
 
 viz.raster(spikes)                    # the canonical SNN plot
 viz.membrane(voltage, spikes=spikes, threshold=1.0)
-viz.layer_rates_from(net, xs)         # is my network silent?
+viz.layer_rates_from(net, xs)         # check for silent layers
 viz.rate_heatmap(spikes)
 viz.weights(net.layers[0].weight)
 viz.architecture(net, input_shape=(1, 700))
