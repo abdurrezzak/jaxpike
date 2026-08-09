@@ -377,6 +377,7 @@ def main() -> None:
     ap.add_argument("--channels", type=int, default=128)
     ap.add_argument("--lr", type=float, default=5e-4)
     ap.add_argument("--trials", type=int, default=0, help="timed trials after one warm-up")
+    ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--data", default="data/shd")
     ap.add_argument("--smoke", action="store_true", help="synthetic data, tiny, for CPU")
     ap.add_argument(
@@ -405,7 +406,7 @@ def main() -> None:
     train_inputs = jnp.asarray(x_train)
     train_labels = jnp.asarray(y_train, dtype=jnp.int32)
 
-    key = jax.random.key(0)
+    key = jax.random.key(args.seed)
     model = build(args.hidden, args.channels, key, neuron_kind=neuron_kind)
 
     scratch = peak_scratch_bytes(model, runner, args.batch, args.timesteps, args.channels)

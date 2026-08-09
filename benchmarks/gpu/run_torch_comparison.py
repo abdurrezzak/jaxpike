@@ -118,24 +118,35 @@ def speed(
     return "\n".join(out)
 
 
-@app.function(gpu=GPU, timeout=6 * 60 * 60, volumes={"/root/data": CACHE})
-def accuracy(epochs: int = 100, hidden: int = 128, batch: int = 256) -> str:
+@app.function(gpu=GPU, timeout=12 * 60 * 60, volumes={"/root/data": CACHE})
+def accuracy(
+    epochs: int = 100,
+    hidden: int = 128,
+    batch: int = 256,
+    seeds: str = "0,1,2,3,4",
+    libraries: str = "spikingjelly:cupy",
+    variants: str = "sequential,parallel",
+) -> str:
+    """Accuracy across seeds. A single seed cannot distinguish a result from its variance."""
     out = []
     common = [f"--hidden={hidden}", f"--batch={batch}", f"--epochs={epochs}"]
-    for library, backend in (("spikingjelly", "cupy"), ("snntorch", "cupy"), ("norse", "cupy")):
-        out.append(
-            _run(
-                [
-                    "benchmarks/torch_shd.py",
-                    f"--library={library}",
-                    f"--backend={backend}",
-                    *common,
-                ],
-                "accuracy-torch",
+    for seed in [int(s) for s in seeds.split(",")]:
+        for variant in filter(None, variants.split(",")):
+            out.append(_jaxpike(variant, "accuracy-seeds", [*common, f"--seed={seed}"]))
+        for spec in filter(None, libraries.split(",")):
+            library, _, backend = spec.partition(":")
+            out.append(
+                _run(
+                    [
+                        "benchmarks/torch_shd.py",
+                        f"--library={library}",
+                        f"--backend={backend or 'torch'}",
+                        f"--seed={seed}",
+                        *common,
+                    ],
+                    "accuracy-seeds",
+                )
             )
-        )
-    for variant in ("sequential", "parallel"):
-        out.append(_jaxpike(variant, "accuracy-torch", common))
     return "\n".join(out)
 
 
@@ -257,6 +268,7 @@ def main(
     batches: str = "64,128,256",
     timesteps: str = "256,512,1024",
     libraries: str = ALL_TORCH,
+    seeds: str = "0,1,2,3,4",
 ) -> None:
     suites = {
         "smoke": lambda: smoke.remote(),
@@ -267,7 +279,7 @@ def main(
         "speed": lambda: speed.remote(
             epochs=epochs, trials=trials, batches=batches, libraries=libraries
         ),
-        "accuracy": lambda: accuracy.remote(epochs=epochs),
+        "accuracy": lambda: accuracy.remote(epochs=epochs, seeds=seeds, libraries=libraries),
         "scaling": lambda: scaling.remote(
             epochs=epochs, trials=trials, timesteps_list=timesteps, libraries=libraries
         ),
