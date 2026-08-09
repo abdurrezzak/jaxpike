@@ -23,9 +23,14 @@ Networks are ordinary pytrees, state is explicit and functional, and everything 
 The field usually frames SNN tooling as a single tradeoff: **speed versus flexibility.**
 Libraries built on hand-written CUDA kernels are fast but only support the neuron models
 somebody already wrote a kernel for. Libraries in pure PyTorch or JAX let you write any neuron
-and run considerably slower. jaxpike attacks that tradeoff from the algorithmic side first —
-parallel-in-time execution, rematerialization and online learning are all pure JAX and need no
-kernel code at all.
+and run considerably slower.
+
+**jaxpike's claim is that the flexible side of that tradeoff no longer costs an order of
+magnitude.** With neurons written as ordinary JAX functions, it lands within 1.35× of
+SpikingJelly's hand-written CuPy kernels and 31–43× ahead of everything else measured, using a
+fraction of the memory. The gains are algorithmic rather than hand-tuned — hoisting stateless
+layers out of the time loop, rematerialization, parallel-in-time execution — so they apply to
+any neuron you write rather than to a fixed list.
 
 ## What is measured
 

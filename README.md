@@ -30,23 +30,34 @@ logits = jp.spike_rate(spikes)
 ## Why jaxpike
 
 Spiking networks are recurrent networks with a non-differentiable activation, and the
-frameworks that train them force a choice. Hand-written CUDA kernels are fast but only support
-the neuron models someone already wrote a kernel for. Pure PyTorch and JAX implementations let
-you write any neuron and run an order of magnitude slower.
+frameworks that train them force a choice. Hand-written CUDA kernels are fast, but you only get
+the neuron models somebody already wrote a kernel for. Everything written in ordinary PyTorch
+or JAX lets you define any neuron you like and runs an order of magnitude slower.
 
-jaxpike takes the second path and closes most of the gap by construction rather than by hand:
+**jaxpike's claim is that the second path no longer costs an order of magnitude.** Writing
+neurons as ordinary JAX functions, it lands within 1.35× of SpikingJelly's hand-written CuPy
+kernels and 31–43× ahead of everything else measured — at a fraction of the memory. That is a
+measured result, not an architectural aspiration; the [benchmarks](#benchmarks) include the
+configuration where it loses.
+
+Four things get it there:
 
 - **Layer-wise execution.** Stateless layers are hoisted out of the time loop and evaluated
   once across all timesteps, so a `Dense` becomes one large matrix multiply instead of `T`
-  small ones.
-- **Three execution strategies, one signature.** `unroll` for sequential BPTT,
+  small ones. Bit-identical to walking each timestep, and it is most of the speed.
+- **Three execution strategies behind one signature.** `unroll` for sequential BPTT,
   `unroll_checkpointed` for `O(√T)` memory, `unroll_parallel` for `O(log T)` depth on
-  reset-free neurons. They are interchangeable and produce the same answers.
-- **Surrogate gradients without custom VJPs.** Write the smooth relaxation; the derivative
-  comes from autodiff, so forward and backward cannot disagree.
-- **Explicit functional state.** Long sequences stream in chunks and truncated BPTT is free.
-- **NIR import and export**, so trained models move to Loihi, SpiNNaker2, Speck and the rest
-  of the neuromorphic ecosystem.
+  reset-free neurons. Interchangeable, and verified to agree.
+- **Memory as a capability, not a footnote.** A 256-step BPTT graph fits in 64 MB where
+  SpikingJelly needs 792 MB. On long sequences this stops being a ratio and becomes the
+  difference between a model that runs and one that does not.
+- **Nothing is registered or subclassed.** A neuron is any object with three methods, and a
+  surrogate gradient is one smooth function whose derivative comes from autodiff. There is no
+  supported-model list to fall off.
+
+Plus explicit functional state, so long sequences stream in chunks and truncated BPTT is free,
+and NIR import and export, so trained models move to Loihi, SpiNNaker2, Speck and the rest of
+the neuromorphic ecosystem.
 
 ## Installation
 
@@ -272,8 +283,9 @@ surrogate gradients, plasticity, NIR interchange, visualization, and e-prop.
 Not yet built, in priority order:
 
 - **Compiled neuron kernels.** Tracing a user's neuron to a jaxpr and generating a fused
-  Pallas kernel plus its custom VJP. This is the project's central bet and is currently
-  untested: Pallas requires compute capability 8.0 or higher.
+  Pallas kernel plus its custom VJP. This is where the remaining 1.35× lives, and it is
+  currently **untested rather than unproven**: Pallas requires compute capability 8.0 or
+  higher, and the hardware available to this project is sm_75.
 - **Parallel-in-time for reset neurons.** Chunked scan and DEER-style fixed-point iteration,
   extending `unroll_parallel` beyond the reset-free case.
 - **Sparse event-driven matmul.** Spikes are 1–5% dense; dense compute discards most of that.
