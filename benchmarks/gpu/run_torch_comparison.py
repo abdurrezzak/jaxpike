@@ -269,6 +269,7 @@ def main(
     timesteps: str = "256,512,1024",
     libraries: str = ALL_TORCH,
     seeds: str = "0,1,2,3,4",
+    variants: str = "sequential,parallel",
 ) -> None:
     suites = {
         "smoke": lambda: smoke.remote(),
@@ -279,7 +280,9 @@ def main(
         "speed": lambda: speed.remote(
             epochs=epochs, trials=trials, batches=batches, libraries=libraries
         ),
-        "accuracy": lambda: accuracy.remote(epochs=epochs, seeds=seeds, libraries=libraries),
+        "accuracy": lambda: accuracy.remote(
+            epochs=epochs, seeds=seeds, libraries=libraries, variants=variants
+        ),
         "scaling": lambda: scaling.remote(
             epochs=epochs, trials=trials, timesteps_list=timesteps, libraries=libraries
         ),
