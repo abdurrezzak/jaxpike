@@ -3,8 +3,8 @@
 **Spiking neural networks in JAX.** Fast, functional, and honest about its numbers.
 
 [![CI](https://github.com/abdurrezzak/jaxpike/actions/workflows/ci.yml/badge.svg)](https://github.com/abdurrezzak/jaxpike/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/abdurrezzak/jaxpike/blob/main/LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://github.com/abdurrezzak/jaxpike/blob/main/pyproject.toml)
 
 ```python
 import jax
@@ -83,11 +83,11 @@ Requires Python 3.11+.
 
 ## Documentation
 
-Full documentation, tutorials and API reference live in [`website/`](website/) and cover the
-[quickstart](website/docs/getting-started/quickstart.md), a
-[worked SHD training run](website/docs/getting-started/training-shd.md), a
-[migration guide from snnTorch](website/docs/guides/coming-from-snntorch.md), and
-[why deep SNNs go silent](website/docs/guides/silent-networks.md).
+Full documentation, tutorials and API reference live in [`website/`](https://github.com/abdurrezzak/jaxpike/blob/main/website/) and cover the
+[quickstart](https://github.com/abdurrezzak/jaxpike/blob/main/website/docs/getting-started/quickstart.md), a
+[worked SHD training run](https://github.com/abdurrezzak/jaxpike/blob/main/website/docs/getting-started/training-shd.md), a
+[migration guide from snnTorch](https://github.com/abdurrezzak/jaxpike/blob/main/website/docs/guides/coming-from-snntorch.md), and
+[why deep SNNs go silent](https://github.com/abdurrezzak/jaxpike/blob/main/website/docs/guides/silent-networks.md).
 
 ```bash
 cd website && npm install && npm start   # Node 20+
@@ -98,7 +98,7 @@ cd website && npm install && npm start   # Node 20+
 Every framework installed side by side and trained on identical arrays with the same model,
 optimizer, loss and dtype, in one container on one NVIDIA T4. SHD, hidden 128, 20 epochs at
 batch 256, T=256. Full protocol, ablations and unfavourable results in
-[`benchmarks/README.md`](benchmarks/README.md).
+[`benchmarks/README.md`](https://github.com/abdurrezzak/jaxpike/blob/main/benchmarks/README.md).
 
 | framework | training time | peak memory |
 |---|---:|---:|
@@ -175,7 +175,7 @@ net = jp.Graph(
 )
 ```
 
-![Architecture diagrams](docs/figures/architecture_light.png)
+![Architecture diagrams](https://raw.githubusercontent.com/abdurrezzak/jaxpike/main/docs/figures/architecture_light.png)
 
 Two rules make any wiring well-defined. **A node with several incoming edges sums them**,
 which is what a synapse does and what makes fan-in and skip connections work without special
@@ -228,7 +228,7 @@ threshold. `jp.lif_gain(tau)` returns the compensating factor.
 
 ## Visualization
 
-![Visualization gallery](docs/figures/gallery_light.png)
+![Visualization gallery](https://raw.githubusercontent.com/abdurrezzak/jaxpike/main/docs/figures/gallery_light.png)
 
 ```python
 from jaxpike import viz
@@ -301,7 +301,7 @@ uv venv && uv pip install -e ".[dev]"
 ```
 
 Benchmarks against other frameworks require an NVIDIA GPU and are run remotely; see
-[`benchmarks/README.md`](benchmarks/README.md).
+[`benchmarks/README.md`](https://github.com/abdurrezzak/jaxpike/blob/main/benchmarks/README.md).
 
 ## Citation
 
