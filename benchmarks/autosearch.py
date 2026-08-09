@@ -9,9 +9,13 @@ either did not happen or was not free:
        declared tolerance. Whether it was *bit*-identical is reported separately, because
        reassociation inside a fused loop body perturbs results at around 1e-9 -- harmless, but
        not nothing, and worth never claiming otherwise.
-    2. Then measurement. Compile and steady state are timed separately, because they are paid
-       on different schedules and only one of them is what a training run spends its time on.
-    3. Then ranking, including the losers. A search that records only its wins cannot tell you
+    2. Then measurement, against a reference re-timed immediately beside it. A long sweep on a
+       passively cooled GPU drifts -- the first run of this loop reported a 1.6x regression
+       that was entirely thermal -- so what is recorded is the ratio to a reference measured
+       under the same conditions, not a raw millisecond count from an hour ago.
+    3. Compile and steady state stay separate, because they are paid on different schedules and
+       only one of them is what a training run spends its time on.
+    4. Then ranking, including the losers. A search that records only its wins cannot tell you
        what has already been ruled out.
 
 Results are written as JSON so a later run can compare against an earlier one rather than
@@ -63,6 +67,8 @@ class Result:
     gradient_error: float | None = None
     compile_seconds: float | None = None
     step_ms: float | None = None
+    reference_ms: float | None = None
+    speedup: float | None = None
     scratch_mb: float | None = None
     error: str | None = None
 
@@ -167,6 +173,7 @@ def search(args) -> list[Result]:
         return build(args.hidden, args.channels, key, neuron_kind=neuron)
 
     reference = reference_gradients(model_for("lif"), xs, labels)
+    baseline = next(c for c in candidates(args.timesteps) if c.name == REFERENCE)
 
     results = []
     for candidate in candidates(args.timesteps):
@@ -185,6 +192,12 @@ def search(args) -> list[Result]:
             result.compile_seconds, result.step_ms, result.scratch_mb = measure(
                 candidate, model, xs, labels, args.repeats
             )
+            # Re-time the reference next to the candidate: the device this runs on throttles,
+            # so an absolute millisecond count is only comparable to one taken beside it.
+            _, result.reference_ms, _ = measure(
+                baseline, model_for(baseline.neuron), xs, labels, args.repeats
+            )
+            result.speedup = result.reference_ms / result.step_ms
         except Exception as exc:  # a candidate that cannot run is a result, not a crash
             result.ok = False
             result.error = f"{type(exc).__name__}: {exc}"
@@ -199,7 +212,7 @@ def _summarize(result: Result) -> str:
     mark = "exact" if result.exact else ("approx" if result.exact is False else "n/a")
     status = "" if result.ok else f"  REJECTED ({result.error})"
     return (
-        f"{result.step_ms:7.2f} ms  {result.scratch_mb:7.1f} MB  "
+        f"{result.step_ms:7.2f} ms  {result.speedup:5.2f}x  {result.scratch_mb:7.1f} MB  "
         f"compile {result.compile_seconds:5.2f}s  {mark}{status}"
     )
 
@@ -218,16 +231,14 @@ def main() -> None:
     print(f"batch {args.batch}  T {args.timesteps}  hidden {args.hidden}")
     results = search(args)
 
-    accepted = [r for r in results if r.ok and r.step_ms is not None]
-    accepted.sort(key=lambda r: r.step_ms)
-    baseline = next((r for r in results if r.name == REFERENCE), None)
+    accepted = [r for r in results if r.ok and r.speedup is not None]
+    accepted.sort(key=lambda r: -r.speedup)
 
     print(f"\n{'candidate':<20} {'step':>9} {'vs ref':>8} {'scratch':>10} {'match':>8}")
     for result in accepted:
-        speedup = baseline.step_ms / result.step_ms if baseline and baseline.step_ms else 0.0
         mark = "exact" if result.exact else ("approx" if result.exact is False else "n/a")
         print(
-            f"{result.name:<20} {result.step_ms:8.2f}ms {speedup:7.2f}x "
+            f"{result.name:<20} {result.step_ms:8.2f}ms {result.speedup:7.2f}x "
             f"{result.scratch_mb:9.1f}MB {mark:>8}"
         )
 
