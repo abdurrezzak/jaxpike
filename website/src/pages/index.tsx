@@ -25,15 +25,15 @@ logits = jp.max_membrane_logits(membrane)`;
 
 const RESULTS: {value: string; label: string; detail: string; to: string}[] = [
   {
-    value: '~2.5×',
-    label: 'faster training, end to end',
-    detail: 'Parallel-in-time on a real SHD epoch. 17–22× on the isolated forward/backward pass.',
-    to: '/docs/guides/execution',
+    value: '31–43×',
+    label: 'faster than snnTorch and Norse',
+    detail: 'Identical SHD model, same GPU, same container. Within 1.35× of SpikingJelly’s fused CuPy kernel.',
+    to: '/docs/benchmarks',
   },
   {
-    value: '67×',
-    label: 'less BPTT memory',
-    detail: 'Rematerialization at T=5000, for a 1.09× time cost on a T4.',
+    value: '12×',
+    label: 'less memory than SpikingJelly',
+    detail: 'A 256-step BPTT graph in 64 MB against 792 MB, via rematerialization.',
     to: '/docs/guides/execution',
   },
   {
@@ -43,9 +43,9 @@ const RESULTS: {value: string; label: string; detail: string; to: string}[] = [
     to: '/docs/guides/online-learning',
   },
   {
-    value: '0.696',
-    label: 'test on SHD',
-    detail: 'Recurrent network against a ~0.71 published reference, epoch selected on validation.',
+    value: '0.751',
+    label: 'test accuracy on SHD',
+    detail: 'Matching the 0.70–0.75 band published for Spyx under the same protocol.',
     to: '/docs/getting-started/training-shd',
   },
 ];

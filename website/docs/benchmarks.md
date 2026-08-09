@@ -17,7 +17,40 @@ improve on better hardware. The full write-ups are in `benchmarks/README.md`.
 PYTHONPATH=. python benchmarks/memory_scaling.py [--time]
 PYTHONPATH=. python benchmarks/parallel_scan.py
 python -m modal run benchmarks/gpu/run_modal.py --bench {memory,parallel,network,reset,shd}
+python -m modal run benchmarks/gpu/run_torch_comparison.py --suite speed
 ```
+
+## Against other frameworks
+
+Every framework installed side by side and run in one container on one GPU, each in its own
+subprocess so no library is measured while another holds device memory. Identical model,
+identical input arrays, same optimizer, loss and dtype:
+`Linear(128,128) -> LIF -> Linear(128,128) -> LIF -> Linear(128,20) -> LI`, Adam 5e-4,
+cross-entropy on the time-integrated readout with 0.3 label smoothing, fp32, 20 epochs at
+batch 256, T=256.
+
+| framework | training time | peak memory |
+|---|---:|---:|
+| SpikingJelly 0.0.0.0.14, multi-step + CuPy | **6.02 s** | 792.1 MB |
+| **jaxpike, `unroll`** | **8.12 s** | 324.5 MB |
+| **jaxpike, `unroll_checkpointed`** | 11.07 s | **64.2 MB** |
+| jaxpike, `unroll_parallel` | 15.80 s | 288.1 MB |
+| Norse 1.1.0 | 252.21 s | 737.3 MB |
+| SpikingJelly, Torch backend | 260.62 s | 696.3 MB |
+| snnTorch 1.0.0 | 347.18 s | 675.8 MB |
+
+jaxpike figures are steady state; compilation costs a further 14–19 s, paid once per shape.
+Test accuracy is 0.751, against the 0.70–0.75 band published for Spyx under this protocol.
+
+Three concessions are made to the other frameworks deliberately, so that a favourable result
+cannot be dismissed: their leaky readout is evaluated in closed form rather than looped,
+SpikingJelly runs its fastest documented path with the CuPy backend verified at runtime rather
+than assumed, and each framework keeps its native decay parameterization.
+
+Anything that steps through time in a Python loop is 31–43× slower. SpikingJelly's fused CuPy
+kernel is **1.35× faster than the best jaxpike path** and is not beaten. Ablation locates the
+whole gap: 83% of a jaxpike training step is the neuron time loop and 71% is the backward
+pass, while the hoisted `Dense` layers already compile to a single large matrix multiply.
 
 ## How memory is measured
 

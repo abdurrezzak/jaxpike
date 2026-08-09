@@ -29,22 +29,33 @@ kernel code at all.
 
 ## What is measured
 
-Every number here is reproducible from `benchmarks/` and `examples/` in the repository, on an
-NVIDIA T4. The [benchmarks page](./benchmarks.md) records unfavourable results alongside the
-favourable ones, including the cases where an approach did not pay off.
+Every number here is reproducible from `benchmarks/` in the repository, on an NVIDIA T4. The
+[benchmarks page](./benchmarks.md) records unfavourable results alongside the favourable ones,
+including the cases where an approach did not pay off.
+
+Training the same SHD network in every framework, side by side in one container on one GPU:
+
+| framework | 20 epochs, batch 256, T=256 | peak memory |
+|---|---:|---:|
+| SpikingJelly, multi-step + CuPy | **6.02 s** | 792.1 MB |
+| **jaxpike, `unroll`** | **8.12 s** | 324.5 MB |
+| **jaxpike, `unroll_checkpointed`** | 11.07 s | **64.2 MB** |
+| Norse | 252.21 s | 737.3 MB |
+| snnTorch | 347.18 s | 675.8 MB |
+
+Accuracy on SHD is **0.751**, matching the 0.70–0.75 band published for Spyx under the same
+protocol. Other measured results:
 
 | Result | Number |
 |---|---|
 | Parallel-in-time, isolated membrane | 119× faster at `T=8192` |
-| Parallel-in-time, whole network training | **~2.5× faster end to end** |
 | BPTT memory via rematerialization | 67× less at `T=5000` |
 | e-prop memory | flat in `T` — 2671× less than BPTT at `T=4000` |
-| Spiking Heidelberg Digits, recurrent | **0.696 test** (published reference ~0.71) |
 | LIF integrator | exact closed-form ODE solution |
 
-The 2.5× is the figure to plan around. The 119× is an isolated membrane microbenchmark; a real
-training epoch also contains data transfer, matmuls and the optimizer, none of which
-parallelizing the time axis touches.
+The 119× is an isolated membrane microbenchmark. A real training epoch also contains data
+movement, matrix multiplies and the optimizer, none of which parallelizing the time axis
+touches — which is why the end-to-end table above is the one to plan around.
 
 ## Where to start
 
