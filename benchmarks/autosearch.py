@@ -56,6 +56,7 @@ class Candidate:
     neuron: str = "lif"
     tolerance: float = 1e-5
     note: str = ""
+    forward_only: bool = False
 
 
 @dataclasses.dataclass
@@ -101,7 +102,10 @@ def ablate(model, *, drop: str):
     layers = []
     for layer in model.layers:
         is_dense = isinstance(layer, jp.Dense)
-        if drop == "gemms" and is_dense:
+        # A Dense that changes width cannot be dropped without breaking every layer after it,
+        # so the readout projection stays in both ablations.
+        square = is_dense and layer.weight.shape[0] == layer.weight.shape[1]
+        if drop == "gemms" and square:
             layers.append(Passthrough(stateful=False))
         elif drop == "neurons" and not is_dense:
             layers.append(Passthrough(stateful=True))
@@ -125,6 +129,13 @@ def candidates(timesteps: int) -> list[Candidate]:
             lambda m, xs, **kw: jp.unroll(ablate(m, drop="gemms"), xs, **kw),
             tolerance=float("inf"),
             note="diagnostic: neuron loops only",
+        ),
+        Candidate(
+            "forward-only",
+            jp.unroll,
+            tolerance=float("inf"),
+            forward_only=True,
+            note="diagnostic: no backward pass",
         ),
         Candidate(
             "parallel",
@@ -153,7 +164,7 @@ def candidates(timesteps: int) -> list[Candidate]:
     return space
 
 
-def make_step(model, runner, optimizer):
+def make_step(model, runner, optimizer, *, forward_only: bool = False):
     params, static = eqx.partition(model, eqx.is_inexact_array)
 
     def loss_fn(p, xs, labels):
@@ -161,6 +172,8 @@ def make_step(model, runner, optimizer):
         return integral_crossentropy(traces, labels)
 
     def step(p, opt_state, xs, labels):
+        if forward_only:
+            return p, opt_state, loss_fn(p, xs, labels)
         loss, grads = jax.value_and_grad(loss_fn)(p, xs, labels)
         updates, opt_state = optimizer.update(grads, opt_state, p)
         return eqx.apply_updates(p, updates), opt_state, loss
@@ -194,7 +207,9 @@ WARM_UP_SECONDS = 2.0
 
 def measure(candidate: Candidate, model, xs, labels, repeats: int) -> tuple[float, float, float]:
     optimizer = optax.adam(5e-4)
-    params, _, _, step = make_step(model, candidate.runner, optimizer)
+    params, _, _, step = make_step(
+        model, candidate.runner, optimizer, forward_only=candidate.forward_only
+    )
     opt_state = optimizer.init(params)
     compiled = eqx.filter_jit(step)
 
