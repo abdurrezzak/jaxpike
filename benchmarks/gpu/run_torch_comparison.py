@@ -83,30 +83,37 @@ def _jaxpike(variant: str, tag: str, extra: list[str]) -> str:
     return _run(["benchmarks/spyx_shd.py", f"--variant={variant}", *extra], tag, JAX_ENV)
 
 
+ALL_TORCH = "spikingjelly:cupy,spikingjelly:torch,snntorch:torch,norse:torch"
+
+
 @app.function(gpu=GPU, timeout=6 * 60 * 60, volumes={"/root/data": CACHE})
-def speed(epochs: int = 20, trials: int = 3, hidden: int = 128, batches: str = "64,128,256") -> str:
+def speed(
+    epochs: int = 20,
+    trials: int = 3,
+    hidden: int = 128,
+    batches: str = "64,128,256",
+    libraries: str = ALL_TORCH,
+    variants: str = "sequential,checkpointed,parallel",
+) -> str:
+    """`libraries` selects the PyTorch rows as `name:backend`; the slow ones cost minutes."""
     out = []
     for batch in [int(b) for b in batches.split(",")]:
         common = [f"--hidden={hidden}", f"--batch={batch}", f"--epochs={epochs}"]
         common += [f"--trials={trials}", "--skip-accuracy"]
-        for library, backend in (
-            ("spikingjelly", "cupy"),
-            ("spikingjelly", "torch"),
-            ("snntorch", "cupy"),
-            ("norse", "cupy"),
-        ):
+        for spec in filter(None, libraries.split(",")):
+            library, _, backend = spec.partition(":")
             out.append(
                 _run(
                     [
                         "benchmarks/torch_shd.py",
                         f"--library={library}",
-                        f"--backend={backend}",
+                        f"--backend={backend or 'torch'}",
                         *common,
                     ],
                     "speed",
                 )
             )
-        for variant in ("sequential", "checkpointed", "parallel"):
+        for variant in filter(None, variants.split(",")):
             out.append(_jaxpike(variant, "speed", common))
     return "\n".join(out)
 
@@ -133,21 +140,31 @@ def accuracy(epochs: int = 100, hidden: int = 128, batch: int = 256) -> str:
 
 
 @app.function(gpu=GPU, timeout=6 * 60 * 60, volumes={"/root/data": CACHE})
-def scaling(epochs: int = 10, trials: int = 3, timesteps_list: str = "256,512,1024") -> str:
+def scaling(
+    epochs: int = 10,
+    trials: int = 3,
+    timesteps_list: str = "256,512,1024",
+    libraries: str = "spikingjelly:cupy",
+    variants: str = "sequential,checkpointed,parallel",
+) -> str:
     out = []
     for timesteps in [int(t) for t in timesteps_list.split(",")]:
         common = [f"--timesteps={timesteps}", f"--epochs={epochs}", f"--trials={trials}"]
         common += ["--skip-accuracy"]
-        out.append(
-            _run(
-                ["benchmarks/torch_shd.py", "--library=spikingjelly", "--backend=cupy", *common],
-                "scaling-torch",
+        for spec in filter(None, libraries.split(",")):
+            library, _, backend = spec.partition(":")
+            out.append(
+                _run(
+                    [
+                        "benchmarks/torch_shd.py",
+                        f"--library={library}",
+                        f"--backend={backend or 'torch'}",
+                        *common,
+                    ],
+                    "scaling-torch",
+                )
             )
-        )
-        out.append(
-            _run(["benchmarks/torch_shd.py", "--library=snntorch", *common], "scaling-torch")
-        )
-        for variant in ("sequential", "parallel"):
+        for variant in filter(None, variants.split(",")):
             out.append(_jaxpike(variant, "scaling-torch", common))
     return "\n".join(out)
 
@@ -208,13 +225,18 @@ def main(
     trials: int = 3,
     batches: str = "64,128,256",
     timesteps: str = "256,512,1024",
+    libraries: str = ALL_TORCH,
 ) -> None:
     suites = {
         "smoke": lambda: smoke.remote(),
         "scan-unroll": lambda: scan_unroll.remote(),
         "jaxpike": lambda: jaxpike.remote(epochs=epochs, trials=trials, batches=batches),
-        "speed": lambda: speed.remote(epochs=epochs, trials=trials, batches=batches),
+        "speed": lambda: speed.remote(
+            epochs=epochs, trials=trials, batches=batches, libraries=libraries
+        ),
         "accuracy": lambda: accuracy.remote(epochs=epochs),
-        "scaling": lambda: scaling.remote(epochs=epochs, trials=trials, timesteps_list=timesteps),
+        "scaling": lambda: scaling.remote(
+            epochs=epochs, trials=trials, timesteps_list=timesteps, libraries=libraries
+        ),
     }
     print(suites[suite]())
