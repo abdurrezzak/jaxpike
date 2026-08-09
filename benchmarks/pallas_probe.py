@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import mosaic_gpu as plgpu
+from jax.experimental.pallas import triton as plt
 
 import jaxpike as jp
 
@@ -32,13 +32,14 @@ def _lif_kernel(x_ref, s_ref, *, timesteps: int, alpha: float, threshold: float,
     The membrane never leaves registers, and each step reads one contiguous row of the tile,
     so the loop costs one coalesced load and one store per timestep instead of a kernel launch.
     """
-    columns = pl.program_id(0) * block + jnp.arange(block)
+    start = pl.program_id(0) * block
 
     def step(t, v):
-        x = x_ref[t, columns]
+        window = (pl.ds(t, 1), pl.ds(start, block))
+        x = x_ref[window].reshape(block)
         v = alpha * v + (1.0 - alpha) * x
         s = jnp.where(v > threshold, 1.0, 0.0)
-        s_ref[t, columns] = s
+        s_ref[window] = s.reshape(1, block)
         return v - threshold * s
 
     jax.lax.fori_loop(0, timesteps, step, jnp.zeros(block, dtype=x_ref.dtype))
@@ -56,7 +57,9 @@ def pallas_lif(x, *, alpha: float, threshold: float, block: int = 256):
     timesteps, rows = x.shape
     if rows % block:
         raise ValueError(f"{rows} rows is not divisible by block {block}")
-    spec = pl.BlockSpec(memory_space=plgpu.GMEM)
+    # Triton rather than Mosaic GPU: Mosaic targets Hopper and cannot lower this kernel on the
+    # sm_75 card these benchmarks run on.
+    spec = pl.BlockSpec(memory_space=pl.ANY)
     return pl.pallas_call(
         functools.partial(
             _lif_kernel, timesteps=timesteps, alpha=alpha, threshold=threshold, block=block
@@ -65,6 +68,7 @@ def pallas_lif(x, *, alpha: float, threshold: float, block: int = 256):
         in_specs=[spec],
         out_specs=spec,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        compiler_params=plt.CompilerParams(),
     )(x)
 
 
