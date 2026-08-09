@@ -260,6 +260,44 @@ def make_step(static, runner, optimizer):
     return step
 
 
+class Trainer:
+    """A compiled training run, separated from the act of running it.
+
+    Compilation is a real cost but a one-time one, and the PyTorch libraries this is measured
+    against pay nothing like it. Building the jitted function once, here, means a timed trial
+    measures execution -- previously every trial rebuilt the closure, missed JAX's cache and
+    silently re-paid the full compile.
+    """
+
+    def __init__(self, model, runner, inputs, labels, *, batch_size: int, lr: float):
+        self.params, self.static = eqx.partition(model, eqx.is_inexact_array)
+        self.optimizer = optax.adam(lr)
+        step = make_step(self.static, runner, self.optimizer)
+
+        n_batches = len(labels) // batch_size
+        usable = n_batches * batch_size
+
+        def run_epoch(carry, epoch_key):
+            current, opt_state = carry
+            order = jax.random.permutation(epoch_key, len(labels))[:usable]
+            xs = inputs[order].reshape(n_batches, batch_size, *inputs.shape[1:])
+            ys = labels[order].reshape(n_batches, batch_size)
+            (current, opt_state), losses = jax.lax.scan(step, (current, opt_state), (xs, ys))
+            return (current, opt_state), jnp.mean(losses)
+
+        @jax.jit
+        def run_all(params, opt_state, keys):
+            return jax.lax.scan(run_epoch, (params, opt_state), keys)
+
+        self.run_all = run_all
+
+    def __call__(self, *, epochs: int, key):
+        opt_state = self.optimizer.init(self.params)
+        keys = jax.random.split(key, epochs)
+        (params, _), losses = self.run_all(self.params, opt_state, keys)
+        return eqx.combine(params, self.static), losses
+
+
 def train(model, runner, inputs, labels, *, epochs: int, batch_size: int, lr: float, key):
     """Train fully on device. `inputs` is (N, T, C) uint8; batches are time-major per step.
 
@@ -267,29 +305,8 @@ def train(model, runner, inputs, labels, *, epochs: int, batch_size: int, lr: fl
     that Spyx's speed rests on, matched here so the comparison is of implementations rather
     than of training-loop overhead.
     """
-    params, static = eqx.partition(model, eqx.is_inexact_array)
-    optimizer = optax.adam(lr)
-    opt_state = optimizer.init(params)
-    step = make_step(static, runner, optimizer)
-
-    n_batches = len(labels) // batch_size
-    usable = n_batches * batch_size
-
-    def run_epoch(carry, epoch_key):
-        current, opt_state = carry
-        order = jax.random.permutation(epoch_key, len(labels))[:usable]
-        xs = inputs[order].reshape(n_batches, batch_size, *inputs.shape[1:])
-        ys = labels[order].reshape(n_batches, batch_size)
-        (current, opt_state), losses = jax.lax.scan(step, (current, opt_state), (xs, ys))
-        return (current, opt_state), jnp.mean(losses)
-
-    @jax.jit
-    def run_all(params, opt_state, keys):
-        return jax.lax.scan(run_epoch, (params, opt_state), keys)
-
-    keys = jax.random.split(key, epochs)
-    (params, _), losses = run_all(params, opt_state, keys)
-    return eqx.combine(params, static), losses
+    trainer = Trainer(model, runner, inputs, labels, batch_size=batch_size, lr=lr)
+    return trainer(epochs=epochs, key=key)
 
 
 def accuracy(model, runner, inputs, labels, batch_size: int = 256) -> float:
@@ -415,28 +432,28 @@ def main() -> None:
         print("layer firing rates: " + ", ".join(f"{r:.3f}" for r in rates))
 
     if args.trials:
+        trainer = Trainer(
+            build(args.hidden, args.channels, key, neuron_kind=neuron_kind),
+            runner,
+            train_inputs,
+            train_labels,
+            batch_size=args.batch,
+            lr=args.lr,
+        )
         times = []
         for trial in range(args.trials + 1):
             start = time.perf_counter()
-            fresh = build(args.hidden, args.channels, key, neuron_kind=neuron_kind)
-            _, out = train(
-                fresh,
-                runner,
-                train_inputs,
-                train_labels,
-                epochs=args.epochs,
-                batch_size=args.batch,
-                lr=args.lr,
-                key=key,
-            )
+            _, out = trainer(epochs=args.epochs, key=key)
             out.block_until_ready()
             elapsed = time.perf_counter() - start
             times.append(elapsed)
             print(
-                f"  trial {trial}{' (warm-up, discarded)' if trial == 0 else ''}: {elapsed:.2f} s"
+                f"  trial {trial}{' (compile + run, discarded)' if trial == 0 else ''}: "
+                f"{elapsed:.2f} s"
             )
         timed = np.array(times[1:])
         print(f"TIME {args.epochs} epochs: {timed.mean():.2f} +/- {timed.std():.2f} s")
+        print(f"COMPILE: {times[0] - timed.mean():.2f} s")
 
 
 if __name__ == "__main__":
