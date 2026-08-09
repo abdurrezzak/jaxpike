@@ -8,6 +8,10 @@ the other holds memory.
     modal run benchmarks/gpu/run_torch_comparison.py --suite speed --epochs 20 --trials 3
     modal run benchmarks/gpu/run_torch_comparison.py --suite accuracy --epochs 100
     modal run benchmarks/gpu/run_torch_comparison.py --suite scaling --epochs 10
+
+Run one suite at a time. Every `modal run` of this file creates an ephemeral app under the
+same name, and starting a second one stops the first mid-flight -- results already committed
+to the volume survive, everything in progress does not.
 """
 
 from __future__ import annotations
@@ -148,6 +152,24 @@ def scaling(epochs: int = 10, trials: int = 3, timesteps_list: str = "256,512,10
     return "\n".join(out)
 
 
+@app.function(gpu=GPU, timeout=6 * 60 * 60, volumes={"/root/data": CACHE})
+def jaxpike(
+    epochs: int = 20,
+    trials: int = 3,
+    hidden: int = 128,
+    batches: str = "64,128,256",
+    variants: str = "sequential,checkpointed,parallel",
+) -> str:
+    """Re-measure only our side. The PyTorch rows cost minutes each and do not move."""
+    out = []
+    for batch in [int(b) for b in batches.split(",")]:
+        common = [f"--hidden={hidden}", f"--batch={batch}", f"--epochs={epochs}"]
+        common += [f"--trials={trials}", "--skip-accuracy"]
+        for variant in variants.split(","):
+            out.append(_jaxpike(variant, "jaxpike", common))
+    return "\n".join(out)
+
+
 @app.function(gpu=GPU, timeout=2 * 60 * 60, volumes={"/root/data": CACHE})
 def scan_unroll(factors: str = "1,2,4,8,16,32,64", variant: str = "sequential") -> str:
     """Calibrate how many timesteps the neuron loop should emit per iteration."""
@@ -190,6 +212,7 @@ def main(
     suites = {
         "smoke": lambda: smoke.remote(),
         "scan-unroll": lambda: scan_unroll.remote(),
+        "jaxpike": lambda: jaxpike.remote(epochs=epochs, trials=trials, batches=batches),
         "speed": lambda: speed.remote(epochs=epochs, trials=trials, batches=batches),
         "accuracy": lambda: accuracy.remote(epochs=epochs),
         "scaling": lambda: scaling.remote(epochs=epochs, trials=trials, timesteps_list=timesteps),

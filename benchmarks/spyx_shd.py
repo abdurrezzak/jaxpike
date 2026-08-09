@@ -249,6 +249,10 @@ def make_step(static, runner, optimizer):
     def step(carry, batch):
         params, opt_state = carry
         xs, labels = batch
+        # (batch, time, channels) uint8 -> (time, batch, channels) float32. Done here rather
+        # than per epoch so the cast is a fused prologue to the first GEMM instead of a
+        # materialized buffer four times the size of the epoch's inputs.
+        xs = jnp.swapaxes(xs, 0, 1).astype(jnp.float32)
         loss, grads = jax.value_and_grad(loss_fn)(params, xs, labels)
         updates, opt_state = optimizer.update(grads, opt_state, params)
         return (eqx.apply_updates(params, updates), opt_state), loss
@@ -276,8 +280,6 @@ def train(model, runner, inputs, labels, *, epochs: int, batch_size: int, lr: fl
         order = jax.random.permutation(epoch_key, len(labels))[:usable]
         xs = inputs[order].reshape(n_batches, batch_size, *inputs.shape[1:])
         ys = labels[order].reshape(n_batches, batch_size)
-        # (batch, time, channels) -> (time, batch, channels), the layout unroll expects.
-        xs = jnp.swapaxes(xs, 1, 2).astype(jnp.float32)
         (current, opt_state), losses = jax.lax.scan(step, (current, opt_state), (xs, ys))
         return (current, opt_state), jnp.mean(losses)
 
@@ -329,7 +331,7 @@ def peak_scratch_bytes(model, runner, batch_size: int, timesteps: int, channels:
     optimizer = optax.adam(1e-3)
     opt_state = optimizer.init(params)
     step = make_step(static, runner, optimizer)
-    xs = jnp.zeros((timesteps, batch_size, channels), jnp.float32)
+    xs = jnp.zeros((batch_size, timesteps, channels), jnp.uint8)
     ys = jnp.zeros((batch_size,), jnp.int32)
 
     def one(p, state, batch_xs, batch_ys):
