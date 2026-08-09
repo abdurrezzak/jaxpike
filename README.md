@@ -20,7 +20,7 @@ net = jp.Sequential(
     jp.LIF(tau=20.0, surrogate=jp.ATan()),
 )
 
-xs = jax.random.uniform(key, (100, 32, 784))   # (time, batch, features)
+xs = jax.random.uniform(key, (100, 32, 784))  # (time, batch, features)
 spikes, state = jp.unroll(net, xs)
 logits = jp.spike_rate(spikes)
 ```
@@ -156,7 +156,7 @@ net = jp.Graph(
         ("input", "w_in"),
         ("w_in", "hidden"),
         ("hidden", "w_rec"),
-        ("w_rec", "hidden"),      # closes a cycle
+        ("w_rec", "hidden"),  # closes a cycle
         ("hidden", "w_out"),
         ("w_out", "out"),
     ],
@@ -184,7 +184,7 @@ written for channels-last and NCHW forces a transpose around every operation.
 gain = jp.lif_gain(tau=20.0)
 
 net = jp.Sequential(
-    jp.Conv2d(2, 32, 3, key=k1, gain=gain),   # 2 channels: DVS on/off events
+    jp.Conv2d(2, 32, 3, key=k1, gain=gain),  # 2 channels: DVS on/off events
     jp.LinearLIF(tau=20.0, threshold=0.2),
     jp.Pool2d(2),
     jp.Conv2d(32, 64, 3, key=k2, gain=gain),
@@ -224,7 +224,7 @@ from jaxpike import viz
 
 viz.raster(spikes)
 viz.membrane(voltages, spikes=spikes, threshold=1.0)
-viz.layer_rates_from(net, xs)       # check for silent or saturated layers
+viz.layer_rates_from(net, xs)  # check for silent or saturated layers
 viz.rate_heatmap(spikes)
 viz.weights(net.layers[0].weight)
 ```
