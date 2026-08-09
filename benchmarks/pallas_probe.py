@@ -21,38 +21,49 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import mosaic_gpu as plgpu
 
 import jaxpike as jp
 
 
-def _lif_kernel(x_ref, s_ref, *, timesteps: int, alpha: float, threshold: float):
+def _lif_kernel(x_ref, s_ref, *, timesteps: int, alpha: float, threshold: float, block: int):
     """One program owns a tile of neurons and walks the whole sequence for them.
 
     The membrane never leaves registers, and each step reads one contiguous row of the tile,
     so the loop costs one coalesced load and one store per timestep instead of a kernel launch.
     """
+    columns = pl.program_id(0) * block + jnp.arange(block)
 
     def step(t, v):
-        x = x_ref[t, :]
+        x = x_ref[t, columns]
         v = alpha * v + (1.0 - alpha) * x
         s = jnp.where(v > threshold, 1.0, 0.0)
-        s_ref[t, :] = s
+        s_ref[t, columns] = s
         return v - threshold * s
 
-    jax.lax.fori_loop(0, timesteps, step, jnp.zeros_like(x_ref[0, :]))
+    jax.lax.fori_loop(0, timesteps, step, jnp.zeros(block, dtype=x_ref.dtype))
 
 
 @functools.partial(jax.jit, static_argnames=("alpha", "threshold", "block"))
 def pallas_lif(x, *, alpha: float, threshold: float, block: int = 256):
-    """`x` is (T, rows); returns spikes of the same shape."""
+    """`x` is (T, rows); returns spikes of the same shape.
+
+    A `BlockSpec` with a shape stages that whole tile in shared memory, which for a (T, block)
+    tile means the entire sequence -- 512 KB against a 64 KB budget at T=256. The tile here is
+    left in global memory and one row is loaded per timestep, which is all the recurrence ever
+    needs live.
+    """
     timesteps, rows = x.shape
     if rows % block:
         raise ValueError(f"{rows} rows is not divisible by block {block}")
+    spec = pl.BlockSpec(memory_space=plgpu.GMEM)
     return pl.pallas_call(
-        functools.partial(_lif_kernel, timesteps=timesteps, alpha=alpha, threshold=threshold),
+        functools.partial(
+            _lif_kernel, timesteps=timesteps, alpha=alpha, threshold=threshold, block=block
+        ),
         grid=(rows // block,),
-        in_specs=[pl.BlockSpec((timesteps, block), lambda i: (0, i))],
-        out_specs=pl.BlockSpec((timesteps, block), lambda i: (0, i)),
+        in_specs=[spec],
+        out_specs=spec,
         out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
     )(x)
 
@@ -86,7 +97,7 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--neurons", type=int, default=128)
     ap.add_argument("--timesteps", type=int, default=256)
-    ap.add_argument("--blocks", default="8,16,32,64")
+    ap.add_argument("--blocks", default="32,64,128,256")
     ap.add_argument("--repeats", type=int, default=20)
     args = ap.parse_args()
 
