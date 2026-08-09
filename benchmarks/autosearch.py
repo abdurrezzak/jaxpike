@@ -9,10 +9,11 @@ either did not happen or was not free:
        declared tolerance. Whether it was *bit*-identical is reported separately, because
        reassociation inside a fused loop body perturbs results at around 1e-9 -- harmless, but
        not nothing, and worth never claiming otherwise.
-    2. Then measurement, against a reference re-timed immediately beside it. A long sweep on a
-       passively cooled GPU drifts -- the first run of this loop reported a 1.6x regression
-       that was entirely thermal -- so what is recorded is the ratio to a reference measured
-       under the same conditions, not a raw millisecond count from an hour ago.
+    2. Then measurement, in a subprocess of its own, paired with a reference measured in the
+       same subprocess. Two attempts at this were wrong before it worked: sharing one process
+       across candidates let held-open reference arrays and accumulated models inflate every
+       later timing by ~30%, and even a paired reference could not undo that. What is recorded
+       is a ratio taken under conditions the candidate itself created.
     3. Compile and steady state stay separate, because they are paid on different schedules and
        only one of them is what a training run spends its time on.
     4. Then ranking, including the losers. A search that records only its wins cannot tell you
@@ -172,38 +173,57 @@ def search(args) -> list[Result]:
     def model_for(neuron: str):
         return build(args.hidden, args.channels, key, neuron_kind=neuron)
 
-    reference = reference_gradients(model_for("lif"), xs, labels)
     baseline = next(c for c in candidates(args.timesteps) if c.name == REFERENCE)
+    candidate = next(c for c in candidates(args.timesteps) if c.name == args.only)
+    model = model_for(candidate.neuron)
 
-    results = []
-    for candidate in candidates(args.timesteps):
-        model = model_for(candidate.neuron)
-        result = Result(candidate.name, candidate.note, ok=True)
-        try:
-            if candidate.tolerance != float("inf"):
-                output_error, gradient_error = verify(candidate, model, xs, labels, reference)
-                result.output_error = output_error
-                result.gradient_error = gradient_error
-                worst = max(output_error, gradient_error)
-                result.exact = worst == 0.0
-                if worst > candidate.tolerance:
-                    result.ok = False
-                    result.error = f"disagrees with reference by {worst:.3e}"
-            result.compile_seconds, result.step_ms, result.scratch_mb = measure(
-                candidate, model, xs, labels, args.repeats
-            )
-            # Re-time the reference next to the candidate: the device this runs on throttles,
-            # so an absolute millisecond count is only comparable to one taken beside it.
-            _, result.reference_ms, _ = measure(
-                baseline, model_for(baseline.neuron), xs, labels, args.repeats
-            )
-            result.speedup = result.reference_ms / result.step_ms
-        except Exception as exc:  # a candidate that cannot run is a result, not a crash
+    result = Result(candidate.name, candidate.note, ok=True)
+    if candidate.tolerance != float("inf"):
+        reference = reference_gradients(model_for("lif"), xs, labels)
+        output_error, gradient_error = verify(candidate, model, xs, labels, reference)
+        del reference
+        result.output_error = output_error
+        result.gradient_error = gradient_error
+        worst = max(output_error, gradient_error)
+        result.exact = worst == 0.0
+        if worst > candidate.tolerance:
             result.ok = False
-            result.error = f"{type(exc).__name__}: {exc}"
-        results.append(result)
-        print(f"  {result.name:<20} {_summarize(result)}")
-    return results
+            result.error = f"disagrees with reference by {worst:.3e}"
+
+    # The reference is timed on either side of the candidate, in this same process, so the
+    # ratio reflects the device as the candidate found it.
+    reference_model = model_for(baseline.neuron)
+    _, before, _ = measure(baseline, reference_model, xs, labels, args.repeats)
+    result.compile_seconds, result.step_ms, result.scratch_mb = measure(
+        candidate, model, xs, labels, args.repeats
+    )
+    _, after, _ = measure(baseline, reference_model, xs, labels, args.repeats)
+    result.reference_ms = 0.5 * (before + after)
+    result.speedup = result.reference_ms / result.step_ms
+    return [result]
+
+
+def run_one(name: str, args) -> Result:
+    """Measure a single candidate in a fresh interpreter."""
+    import subprocess
+    import sys
+
+    command = [
+        sys.executable,
+        __file__,
+        f"--only={name}",
+        f"--hidden={args.hidden}",
+        f"--batch={args.batch}",
+        f"--timesteps={args.timesteps}",
+        f"--channels={args.channels}",
+        f"--repeats={args.repeats}",
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    for line in reversed(completed.stdout.splitlines()):
+        if line.startswith("{"):
+            return Result(**json.loads(line))
+    detail = (completed.stderr or completed.stdout).strip().splitlines()
+    return Result(name, "", ok=False, error=detail[-1] if detail else "no output")
 
 
 def _summarize(result: Result) -> str:
@@ -224,22 +244,42 @@ def main() -> None:
     ap.add_argument("--timesteps", type=int, default=256)
     ap.add_argument("--channels", type=int, default=128)
     ap.add_argument("--repeats", type=int, default=20)
+    ap.add_argument("--only", default="", help="measure one candidate and emit it as JSON")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
+    if args.only:
+        result = search(args)[0]
+        print(json.dumps(dataclasses.asdict(result)))
+        return
+
     print(f"device: {jax.devices()[0]}")
     print(f"batch {args.batch}  T {args.timesteps}  hidden {args.hidden}")
-    results = search(args)
+    results = []
+    for candidate in candidates(args.timesteps):
+        result = run_one(candidate.name, args)
+        results.append(result)
+        print(f"  {result.name:<20} {_summarize(result)}")
 
     accepted = [r for r in results if r.ok and r.speedup is not None]
     accepted.sort(key=lambda r: -r.speedup)
 
-    print(f"\n{'candidate':<20} {'step':>9} {'vs ref':>8} {'scratch':>10} {'match':>8}")
+    # The reference measured against itself is the noise floor. Anything inside it is a tie,
+    # and calling a tie a win is how performance work accumulates fiction.
+    self_ratio = next((r.speedup for r in results if r.name == REFERENCE), 1.0)
+    floor = abs(self_ratio - 1.0)
+    print(f"\nnoise floor (reference against itself): {floor:.1%}")
+
+    print(f"\n{'candidate':<20} {'step':>9} {'vs ref':>8} {'scratch':>10} {'match':>8}  verdict")
     for result in accepted:
         mark = "exact" if result.exact else ("approx" if result.exact is False else "n/a")
+        if abs(result.speedup - 1.0) <= floor:
+            verdict = "tie"
+        else:
+            verdict = "faster" if result.speedup > 1.0 else "slower"
         print(
             f"{result.name:<20} {result.step_ms:8.2f}ms {result.speedup:7.2f}x "
-            f"{result.scratch_mb:9.1f}MB {mark:>8}"
+            f"{result.scratch_mb:9.1f}MB {mark:>8}  {verdict}"
         )
 
     rejected = [r for r in results if not r.ok]
