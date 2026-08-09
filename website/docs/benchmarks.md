@@ -111,10 +111,12 @@ A real SHD training epoch, wall clock including transfer, optimizer and evaluati
 | 250 | 128 | 3.9 s | 1.5 s | 2.6× |
 | 1,000 | 64 | 23.7 s | 10.0 s | 2.4× |
 
-**~2.5× end to end is the figure to plan around.** The 119× is an isolated membrane and the
-17–22× is the isolated forward/backward pass; an epoch also contains host-to-device transfer,
-matmuls, the optimizer and evaluation, none of which parallelizing time touches. All three
-measure different things, and only the last describes a full training run.
+**These three numbers measure different things and only the last describes a training run.**
+The 119× is an isolated membrane and the 17–22× is an isolated forward/backward pass; an epoch
+also contains host-to-device transfer, matrix multiplies, the optimizer and evaluation, none of
+which parallelizing time touches. On the framework comparison above, at `T=256` with batch 256,
+`unroll_parallel` is *slower* than `unroll` — the time axis is not the bottleneck at that
+shape.
 
 The parallel path also costs memory — it materializes the full `[T, B, N]` tensor, 1.9 GB at
 `T=8192` where checkpointing needs a few megabytes. The two techniques currently sit at

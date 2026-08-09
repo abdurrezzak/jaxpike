@@ -121,7 +121,7 @@ autodiff differentiates it, so forward and backward cannot disagree. See
 
 ## What jaxpike has that snnTorch does not
 
-- **Parallel-in-time execution** for reset-free neurons — ~2.5× end to end. See
+- **Parallel-in-time execution** for reset-free neurons, on long sequences. See
   [Execution](./execution.md).
 - **Rematerialized BPTT** — 67× less memory at `T=5000`, one function call.
 - **e-prop** with memory flat in sequence length. See [Online learning](./online-learning.md).

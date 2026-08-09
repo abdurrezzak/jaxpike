@@ -19,7 +19,7 @@ spikes, state = jp.unroll_parallel(net, xs)      # associative scan over time
 |---|---|---|---|
 | `unroll` | everything | baseline | `O(T·B·N)` |
 | `unroll_checkpointed` | everything | 1.1–1.4× slower | `O(sqrt(T)·B·N)` — **67× less at T=5000** |
-| `unroll_parallel` | reset-free neurons only | **~2.5× faster end to end** | materializes `[T, B, N]` |
+| `unroll_parallel` | reset-free neurons only | faster only at long `T` or small batch | materializes `[T, B, N]` |
 
 ## `unroll` — the sequential reference
 
@@ -72,17 +72,20 @@ Membrane values differ by at most 5.96e-07 at `T=8192` — pure float32 accumula
 
 ### The numbers, and which one to believe
 
-| What was measured | Speedup |
+| What was measured | Result |
 |---|---|
-| Isolated membrane, `T=8192` | 119× |
-| Whole network forward+backward, `T=8192` | 17–22× |
-| **A real SHD training epoch** | **~2.5×** |
+| Isolated membrane, `T=8192` | 119× faster |
+| Whole network forward+backward, `T=8192`, batch 16 | 17–22× faster |
+| **SHD training, `T=256`, batch 256** | **0.51× — slower than `unroll`** |
 
-All three measure different things, and the last is the one that describes a training run.
-An epoch also contains host-to-device transfer, the Dense matmuls, the optimizer and
-evaluation, none of which parallelizing the time axis touches; Amdahl's law does the rest.
-Plan around 2.5×: the 119× is a microbenchmark of a single membrane and does not describe
-end-to-end training.
+All three measure different things, and the disagreement between them is the point. An epoch
+also contains host-to-device transfer, the matrix multiplies, the optimizer and evaluation,
+none of which parallelizing the time axis touches; Amdahl's law does the rest.
+
+The parallel path wins when the time axis dominates — long sequences, small batches — and
+loses when it does not. At `T=256` with batch 256 there is already enough work to saturate the
+device, so removing the sequential dependency buys nothing and the extra work the associative
+scan performs is a straight loss. Measure before choosing it.
 
 ### What it costs: memory
 

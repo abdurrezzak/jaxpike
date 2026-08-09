@@ -21,14 +21,12 @@ actually are; Spyx's paper says outright that it could not report memory because
 It is deterministic, has no allocator noise, and works on a CPU-only laptop. Two honest
 limits: it is XLA's *plan* rather than an observed high-water mark, and it excludes arguments
 and outputs. It is the right instrument for comparing how two implementations scale against
-each other, and the wrong one for predicting whether a model fits on a given GPU. Phase 0b
-cross-checks it against real device measurements.
+each other, and the wrong one for predicting whether a model fits on a given GPU. The GPU section
+below cross-checks it against real device measurements.
 
 ---
 
-## Phase 0a results — 2026-08-01, Apple Silicon CPU, JAX 0.11.0
-
-Both Phase 0a gates **pass**. These retire the plan's largest risk without renting a GPU.
+## Memory and parallel-in-time — 2026-08-01, Apple Silicon CPU, JAX 0.11.0
 
 ### 1. BPTT memory scaling
 
@@ -43,7 +41,7 @@ Forward+backward through a 4-layer network (Dense→LIF→Dense→LIF), batch 8,
 | 2,500 | 132.0 MB | 3.6 MB | 37.0× | 55,361 |
 | 5,000 | 263.8 MB | 4.0 MB | **66.6×** | 55,329 |
 
-**Gate 0a-1 (≥5× at T=5000): PASS at 66.6×.**
+**66.6× less memory at T=5000.**
 
 Two things worth reading off this table. Naive memory is almost perfectly linear in `T` —
 bytes-per-step varies by only 1.03× across a 50× range of sequence lengths — which confirms
@@ -62,11 +60,9 @@ Time cost of rematerialization, same configuration:
 1.2–1.4× time for 37× memory, which matches theory: checkpointing adds one extra forward
 pass to a forward+backward that already costs about three, so ~1.33× is the expected price.
 
-**Consequence for the plan.** The memory argument for writing Pallas kernels is now
-*weaker*, not stronger, and that is a genuinely useful thing to learn this early: pure-JAX
-rematerialization already captures most of the available memory win. Phase 2's fused kernels
-must therefore justify themselves on **bandwidth and speed**, and must be benchmarked against
-the checkpointed path rather than the naive one. Gate 0b has been rewritten accordingly.
+A practical consequence: pure-JAX rematerialization already captures most of the available
+memory win, so fused kernels must justify themselves on **bandwidth and speed** rather than on
+memory, and must be benchmarked against the checkpointed path rather than the naive one.
 
 ### 2. Parallel-in-time (reset-free membrane)
 
@@ -83,7 +79,7 @@ No FLOP counts are reported here. XLA's cost analysis does not descend into whil
 bodies, so it attributes a few thousand FLOPs to a sequential scan that performs millions —
 a number wrong by three orders of magnitude is worse than no number.
 
-**Gate 0a-2 (numerical equivalence): PASS.** Worst deviation 5.96e-07 at T=8192, pure float32
+Worst deviation 5.96e-07 at T=8192, pure float32
 accumulation-order noise, and — the measure that actually matters — the binary spike trains
 are *identical* at every length, so no threshold crossing was flipped.
 
@@ -94,7 +90,7 @@ what this run establishes. For the speedup, see the GPU results below.
 
 ---
 
-## Phase 0b results — 2026-08-03, NVIDIA T4 (Modal), JAX 0.11.0
+## The same measurements on GPU — 2026-08-03, NVIDIA T4 (Modal), JAX 0.11.0
 
 A T4 is the weakest GPU Modal offers. Everything here should improve on an A100 or H100.
 
@@ -129,9 +125,7 @@ sequential scan's cost grows linearly in `T` while the associative scan's is nea
 the advantage widens with sequence length — exactly the asymptotic signature the approach
 predicts, which is stronger evidence than any single number.
 
-**This reorders the roadmap.** Parallel-in-time was listed third among Phase 2's work items,
-behind fused kernels. It is now first: a 119× algorithmic win on a T4 dwarfs the 2× the
-fused-kernel path is gated at, and it needs no Pallas, no custom VJP, and no hand-tuning.
+This is an algorithmic win that needs no custom kernels, no custom VJP and no hand-tuning.
 
 **The limit, stated plainly.** This is the *reset-free* case, where the recurrence is linear.
 Reset makes it nonlinear and this exact method no longer applies — that is what chunked scan
@@ -142,7 +136,7 @@ a general LIF result and must not be reported as one.
 
 ---
 
-## Phase 2 results — 2026-08-03, NVIDIA T4 (Modal)
+## End-to-end network results — 2026-08-03, NVIDIA T4 (Modal)
 
 ### 5. End-to-end network, parallel-in-time
 
