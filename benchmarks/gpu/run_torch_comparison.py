@@ -187,6 +187,22 @@ def jaxpike(
     return "\n".join(out)
 
 
+@app.function(gpu=GPU, timeout=4 * 60 * 60, volumes={"/root/data": CACHE})
+def autosearch(batch: int = 256, timesteps: int = 256, hidden: int = 128) -> str:
+    """Verify-then-measure every execution strategy, and rank them."""
+    return _run(
+        [
+            "benchmarks/autosearch.py",
+            f"--batch={batch}",
+            f"--timesteps={timesteps}",
+            f"--hidden={hidden}",
+            "--out=/root/data/results/autosearch.json",
+        ],
+        "autosearch",
+        JAX_ENV,
+    )
+
+
 @app.function(gpu=GPU, timeout=2 * 60 * 60, volumes={"/root/data": CACHE})
 def scan_unroll(factors: str = "1,2,4,8,16,32,64", variant: str = "sequential") -> str:
     """Calibrate how many timesteps the neuron loop should emit per iteration."""
@@ -230,6 +246,7 @@ def main(
     suites = {
         "smoke": lambda: smoke.remote(),
         "scan-unroll": lambda: scan_unroll.remote(),
+        "autosearch": lambda: autosearch.remote(timesteps=int(timesteps.split(",")[0])),
         "jaxpike": lambda: jaxpike.remote(epochs=epochs, trials=trials, batches=batches),
         "speed": lambda: speed.remote(
             epochs=epochs, trials=trials, batches=batches, libraries=libraries

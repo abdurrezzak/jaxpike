@@ -1,16 +1,20 @@
 """Surrogate gradients.
 
 A surrogate is defined by a *smooth relaxation* of the Heaviside step, and its gradient is
-obtained from autodiff rather than being written out by hand. `__call__` returns the exact
-binary spike in the forward pass and the relaxation's derivative in the backward pass, via
-the straight-through identity ``soft + stop_gradient(hard - soft)``.
+obtained from autodiff rather than being written out by hand. Defining a new surrogate means
+writing one smooth function and nothing else: no hand-written derivative, no chance of forward
+and backward disagreeing, and a gradient that can be finite-difference checked.
 
-Defining a new surrogate therefore means writing one smooth function and nothing else: no
-custom VJP, no chance of forward and backward disagreeing, and a derivative that can be
-finite-difference checked.
+The forward pass emits the exact binary spike. The obvious way to write that is the
+straight-through identity ``soft + stop_gradient(hard - soft)``, but it makes every forward
+pass evaluate the relaxation only to cancel it -- and XLA cannot elide the work, because
+float addition is not associative and `a + (b - a)` is not `b`. On a spiking network that is a
+transcendental per neuron per timestep, thrown away.
 
-The cost is that the forward pass evaluates the relaxation even though its value is
-discarded, which is a few elementwise ops.
+`custom_jvp` removes it. The forward is a comparison; the tangent is obtained by
+differentiating `relaxation` with `jax.jvp` at backward time. The derivative still comes from
+autodiff -- subclasses gain nothing to get wrong -- it is simply no longer computed where it
+is not needed.
 """
 
 from __future__ import annotations
@@ -21,6 +25,22 @@ import jax.numpy as jnp
 from jaxtyping import Array, Float
 
 
+@jax.custom_jvp
+def _spike(surrogate, v: Array) -> Array:
+    return jnp.asarray(v > 0, v.dtype)
+
+
+@_spike.defjvp
+def _spike_jvp(primals, tangents):
+    surrogate, v = primals
+    d_surrogate, dv = tangents
+    # jvp evaluates the relaxation as well as its derivative; the value is unused and XLA
+    # eliminates it. Differentiating through `surrogate` too keeps learnable surrogate
+    # parameters differentiable.
+    _, tangent = jax.jvp(lambda s, x: s.relaxation(x), (surrogate, v), (d_surrogate, dv))
+    return _spike(surrogate, v), tangent
+
+
 class Surrogate(eqx.Module):
     """Base class. Subclasses implement `relaxation`."""
 
@@ -29,9 +49,7 @@ class Surrogate(eqx.Module):
         raise NotImplementedError
 
     def __call__(self, v: Float[Array, "..."]) -> Float[Array, "..."]:
-        hard = (v > 0).astype(v.dtype)
-        soft = self.relaxation(v)
-        return soft + jax.lax.stop_gradient(hard - soft)
+        return _spike(self, v)
 
 
 class FastSigmoid(Surrogate):

@@ -102,8 +102,9 @@ def unroll(
     Returns the per-timestep outputs stacked on the leading axis, plus the final state, so a
     long sequence can be processed in chunks by feeding the returned state back in.
 
-    `scan_unroll` overrides how many timesteps the time loop emits per iteration; it changes
-    compile time and speed, never results.
+    `scan_unroll` overrides how many timesteps the time loop emits per iteration. Changing it
+    changes compile time and speed, and perturbs results at the level of float reassociation
+    inside the fused body -- around 1e-9 on a 256-step SHD model, not zero.
     """
     if state is None:
         state = net.init_state(xs.shape[1:])
