@@ -15,6 +15,15 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Tutorials',
+      collapsed: false,
+      items: [
+        'tutorials/first-network',
+        'tutorials/custom-neurons',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Guides',
       collapsed: false,
       items: [
