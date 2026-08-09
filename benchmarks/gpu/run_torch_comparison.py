@@ -203,6 +203,21 @@ def autosearch(batch: int = 256, timesteps: int = 256, hidden: int = 128) -> str
     )
 
 
+@app.function(gpu=GPU, timeout=60 * 60, volumes={"/root/data": CACHE})
+def pallas(batch: int = 256, neurons: int = 128, timesteps: int = 256) -> str:
+    """Does a fused time-loop kernel beat lax.scan? The thesis, asked directly."""
+    return _run(
+        [
+            "benchmarks/pallas_probe.py",
+            f"--batch={batch}",
+            f"--neurons={neurons}",
+            f"--timesteps={timesteps}",
+        ],
+        "pallas",
+        JAX_ENV,
+    )
+
+
 @app.function(gpu=GPU, timeout=2 * 60 * 60, volumes={"/root/data": CACHE})
 def scan_unroll(factors: str = "1,2,4,8,16,32,64", variant: str = "sequential") -> str:
     """Calibrate how many timesteps the neuron loop should emit per iteration."""
@@ -246,6 +261,7 @@ def main(
     suites = {
         "smoke": lambda: smoke.remote(),
         "scan-unroll": lambda: scan_unroll.remote(),
+        "pallas": lambda: pallas.remote(timesteps=int(timesteps.split(",")[0])),
         "autosearch": lambda: autosearch.remote(timesteps=int(timesteps.split(",")[0])),
         "jaxpike": lambda: jaxpike.remote(epochs=epochs, trials=trials, batches=batches),
         "speed": lambda: speed.remote(
