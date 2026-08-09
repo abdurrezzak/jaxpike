@@ -153,6 +153,14 @@ def candidates(timesteps: int) -> list[Candidate]:
                 note=f"{factor} timesteps per loop iteration",
             )
         )
+    for factor in (1, 4, 8, 16):
+        space.append(
+            Candidate(
+                f"remat-step-{factor}",
+                lambda m, xs, f=factor: jp.unroll(m, xs, scan_unroll=f, remat_step=True),
+                note=f"recompute the step in backward, {f} per iteration",
+            )
+        )
     for chunk in sorted({c for c in (8, 16, 32, 64) if timesteps % c == 0}):
         space.append(
             Candidate(

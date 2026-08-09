@@ -53,8 +53,13 @@ def _plan(net, input_shape: tuple[int, ...]) -> list[tuple[str, tuple[int, ...]]
     return [(kind, tuple(indices)) for kind, indices in plan]
 
 
-def _scan_segment(layers: tuple, carry: tuple, xs: Array, unroll_factor: int):
-    """One `lax.scan` over time through a run of stateful layers."""
+def _scan_segment(layers: tuple, carry: tuple, xs: Array, unroll_factor: int, remat: bool):
+    """One `lax.scan` over time through a run of stateful layers.
+
+    `remat` recomputes the step in the backward pass instead of keeping its intermediates. A
+    neuron step is a handful of elementwise ops but its residuals are `(T, batch, N)` arrays,
+    so on a memory-bound loop recomputation can cost less than the traffic it replaces.
+    """
 
     def step(state, x):
         new = []
@@ -63,10 +68,13 @@ def _scan_segment(layers: tuple, carry: tuple, xs: Array, unroll_factor: int):
             new.append(s)
         return tuple(new), x
 
-    return jax.lax.scan(step, carry, xs, unroll=unroll_factor)
+    body = jax.checkpoint(step, policy=None) if remat else step
+    return jax.lax.scan(body, carry, xs, unroll=unroll_factor)
 
 
-def _run_segmented(net, xs: Array, state, plan, unroll_factor: int) -> tuple[object, Array]:
+def _run_segmented(
+    net, xs: Array, state, plan, unroll_factor: int, remat: bool
+) -> tuple[object, Array]:
     """Apply the plan to `xs`. Returns `(state, outputs)`, the `lax.scan` carry convention."""
     new_state = list(state)
     for kind, indices in plan:
@@ -75,7 +83,9 @@ def _run_segmented(net, xs: Array, state, plan, unroll_factor: int) -> tuple[obj
                 _, xs = net.layers[index].parallel_apply(None, xs)
         else:
             layers = tuple(net.layers[i] for i in indices)
-            carry, xs = _scan_segment(layers, tuple(state[i] for i in indices), xs, unroll_factor)
+            carry, xs = _scan_segment(
+                layers, tuple(state[i] for i in indices), xs, unroll_factor, remat
+            )
             for slot, index in enumerate(indices):
                 new_state[index] = carry[slot]
     return tuple(new_state), xs
@@ -95,7 +105,12 @@ def _scan_unroll(t: int, requested: int | None) -> int:
 
 
 def unroll(
-    net, xs: Float[Array, "T *rest"], state=None, *, scan_unroll: int | None = None
+    net,
+    xs: Float[Array, "T *rest"],
+    state=None,
+    *,
+    scan_unroll: int | None = None,
+    remat_step: bool = False,
 ) -> tuple[Array, object]:
     """Run `net` over the leading (time) axis of `xs`.
 
@@ -112,13 +127,14 @@ def unroll(
     factor = _scan_unroll(xs.shape[0], scan_unroll)
     plan = _plan(net, xs.shape[1:])
     if plan is not None:
-        final_state, ys = _run_segmented(net, xs, state, plan, factor)
+        final_state, ys = _run_segmented(net, xs, state, plan, factor, remat_step)
         return ys, final_state
 
     def step(carry, x):
         return net(carry, x)
 
-    final_state, ys = jax.lax.scan(step, state, xs, unroll=factor)
+    body = jax.checkpoint(step) if remat_step else step
+    final_state, ys = jax.lax.scan(body, state, xs, unroll=factor)
     return ys, final_state
 
 
@@ -163,7 +179,9 @@ def unroll_checkpointed(
     factor = _scan_unroll(chunk, scan_unroll)
 
     if plan is not None:
-        run_chunk = jax.checkpoint(lambda carry, cxs: _run_segmented(net, cxs, carry, plan, factor))
+        run_chunk = jax.checkpoint(
+            lambda carry, cxs: _run_segmented(net, cxs, carry, plan, factor, False)
+        )
     else:
 
         @jax.checkpoint
