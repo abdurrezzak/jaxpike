@@ -74,10 +74,58 @@ class Result:
     error: str | None = None
 
 
+class Passthrough(eqx.Module):
+    """Stands in for a layer so its cost can be subtracted from the total."""
+
+    stateful: bool = eqx.field(static=True)
+
+    def init_state(self, input_shape):
+        return jnp.zeros(input_shape) if self.stateful else None
+
+    def out_shape(self, input_shape):
+        return input_shape
+
+    def __call__(self, state, x):
+        return (x if self.stateful else None), x
+
+    def parallel_apply(self, state, xs):
+        return (xs[-1] if self.stateful else None), xs
+
+
+def ablate(model, *, drop: str):
+    """The same network with one class of layer replaced by a passthrough.
+
+    Timing tells you how long a step takes. It does not tell you where the time went, and on a
+    network of three GEMMs and three neuron loops the answer decides what to optimize next.
+    """
+    layers = []
+    for layer in model.layers:
+        is_dense = isinstance(layer, jp.Dense)
+        if drop == "gemms" and is_dense:
+            layers.append(Passthrough(stateful=False))
+        elif drop == "neurons" and not is_dense:
+            layers.append(Passthrough(stateful=True))
+        else:
+            layers.append(layer)
+    return jp.Sequential(*layers)
+
+
 def candidates(timesteps: int) -> list[Candidate]:
     """The search space. Extend here; the loop needs no other change."""
     space = [
         Candidate(REFERENCE, jp.unroll, note="reference"),
+        Candidate(
+            "no-neurons",
+            lambda m, xs, **kw: jp.unroll(ablate(m, drop="neurons"), xs, **kw),
+            tolerance=float("inf"),
+            note="diagnostic: GEMMs only",
+        ),
+        Candidate(
+            "no-gemms",
+            lambda m, xs, **kw: jp.unroll(ablate(m, drop="gemms"), xs, **kw),
+            tolerance=float("inf"),
+            note="diagnostic: neuron loops only",
+        ),
         Candidate(
             "parallel",
             jp.unroll_parallel,
@@ -141,6 +189,9 @@ def verify(candidate: Candidate, model, xs, labels, reference) -> tuple[float, f
     return output_error, gradient_error
 
 
+WARM_UP_SECONDS = 2.0
+
+
 def measure(candidate: Candidate, model, xs, labels, repeats: int) -> tuple[float, float, float]:
     optimizer = optax.adam(5e-4)
     params, _, _, step = make_step(model, candidate.runner, optimizer)
@@ -152,6 +203,13 @@ def measure(candidate: Candidate, model, xs, labels, repeats: int) -> tuple[floa
     jax.block_until_ready(out)
     compile_seconds = time.perf_counter() - start
 
+    # A GPU idles at a low clock and takes about a second of sustained load to boost. Timing
+    # from a cold start measures the clock ramp, which is how a fresh process per candidate
+    # ended up noisier than sharing one.
+    deadline = time.perf_counter() + WARM_UP_SECONDS
+    while time.perf_counter() < deadline:
+        jax.block_until_ready(compiled(params, opt_state, xs, labels))
+
     times = []
     for _ in range(repeats):
         start = time.perf_counter()
@@ -160,7 +218,9 @@ def measure(candidate: Candidate, model, xs, labels, repeats: int) -> tuple[floa
         times.append(time.perf_counter() - start)
 
     scratch = compile_stats(step, params, opt_state, xs, labels)["temp_bytes"]
-    return compile_seconds, float(np.median(times)) * 1e3, scratch / 2**20
+    # The minimum is the run least contaminated by scheduling and thermal interference; a
+    # median still averages in whatever the device was doing to us at the time.
+    return compile_seconds, float(np.min(times)) * 1e3, scratch / 2**20
 
 
 def search(args) -> list[Result]:
