@@ -86,7 +86,7 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--neurons", type=int, default=128)
     ap.add_argument("--timesteps", type=int, default=256)
-    ap.add_argument("--block", type=int, default=256)
+    ap.add_argument("--blocks", default="8,16,32,64")
     ap.add_argument("--repeats", type=int, default=20)
     args = ap.parse_args()
 
@@ -99,25 +99,27 @@ def main() -> None:
     print(f"T {args.timesteps}  rows {rows} (batch {args.batch} x neurons {args.neurons})")
 
     scan = functools.partial(scan_lif, alpha=alpha, threshold=threshold)
-    fused = functools.partial(pallas_lif, alpha=alpha, threshold=threshold, block=args.block)
-
     reference = scan(x)
-    try:
-        candidate = fused(x)
-    except Exception as exc:
-        print(f"pallas unavailable here: {type(exc).__name__}: {exc}")
-        return
-
-    mismatch = float(jnp.max(jnp.abs(candidate - reference)))
-    print(f"max disagreement with lax.scan: {mismatch:.3e}")
-    if mismatch > 0:
-        print("kernel is wrong; timing it would be meaningless")
-        return
-
     scan_ms = timed(scan, x, args.repeats)
-    fused_ms = timed(fused, x, args.repeats)
     print(f"lax.scan(unroll=8): {scan_ms:.3f} ms")
-    print(f"pallas fused loop : {fused_ms:.3f} ms   {scan_ms / fused_ms:.2f}x")
+
+    # A BlockSpec stages its whole tile in shared memory, so the neuron block is bounded by
+    # 64 KB / (T * 4 bytes * 2 buffers) -- 32 columns at T=256. Sweeping rather than assuming.
+    for block in [int(b) for b in args.blocks.split(",")]:
+        if rows % block:
+            continue
+        fused = functools.partial(pallas_lif, alpha=alpha, threshold=threshold, block=block)
+        try:
+            candidate = fused(x)
+            mismatch = float(jnp.max(jnp.abs(candidate - reference)))
+        except Exception as exc:
+            print(f"  block {block:>4}: unavailable -- {type(exc).__name__}: {exc}")
+            continue
+        if mismatch > 0:
+            print(f"  block {block:>4}: disagrees with lax.scan by {mismatch:.3e}, not timed")
+            continue
+        fused_ms = timed(fused, x, args.repeats)
+        print(f"  block {block:>4}: {fused_ms:8.3f} ms   {scan_ms / fused_ms:.2f}x")
 
 
 if __name__ == "__main__":
