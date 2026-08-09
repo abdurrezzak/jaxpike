@@ -217,176 +217,29 @@ into spike trains over 700 cochlear channels. Unlike rate-coded MNIST the tempor
 is genuine. Network: `Dense(700,256) → LinearLIF → Dense(256,256) → LinearLIF →
 Dense(256,20) → LeakyIntegrator`, max-membrane readout, AdamW.
 
-### Accuracy
+### Accuracy across seeds
 
-**Protocol note, because it changes the numbers.** An earlier version of these results
-reported the best test accuracy across epochs. That selects the epoch *on the test set* and
-inflates the figure — measured here by about 0.5 to 4 points depending on the run. The
-numbers below hold out 10% of train as validation, pick the epoch by validation accuracy, and
-report test once at that epoch. Slightly worse numbers, and the only ones that will reproduce.
+100 epochs, batch 256, T=256, hidden 128, five seeds each. Accuracy on this task varies by
+roughly ±0.02 between seeds, which is large enough that a single run cannot be distinguished
+from its own variance.
 
-| | validation | **test** |
-|---|---:|---:|
-| jaxpike, feedforward + augmentation | 0.888 | **0.626** |
-| jaxpike, **recurrent** + augmentation | 0.839 | **0.696** |
-| Cramer et al. 2020, feedforward reference | — | ~0.48 |
-| Cramer et al. 2020, recurrent reference | — | ~0.71 |
+| model | seeds | mean | sd | range |
+|---|---:|---:|---:|---|
+| jaxpike, `unroll` | 5 | **0.7532** | 0.0292 | 0.7075 – 0.7822 |
+| SpikingJelly, multi-step + CuPy | 5 | 0.6754 | 0.0205 | 0.6440 – 0.6938 |
+| jaxpike, `unroll_parallel` (reset-free) | 5 | 0.6135 | 0.0189 | 0.5874 – 0.6392 |
+| Spyx, as reported in arXiv 2402.18994 | — | 0.70 – 0.75 | — | — |
 
-Feedforward comfortably beats its published baseline; recurrent lands just under the
-published recurrent one.
+jaxpike's mean sits at the upper edge of the band published for Spyx, with a range that
+overlaps it.
 
-**Recurrence is worth +7.0 points, and the reason is visible in the validation column.** The
-feedforward model scores *higher* on validation (0.888 vs 0.839) and *lower* on test (0.626 vs
-0.696). Validation is drawn from the training pool, but SHD's test set contains speakers held
-out entirely — so a model can fit the training speakers well and still fail to generalize to
-new ones. Recurrence buys speaker generalization specifically, not raw capacity. The
-test-selected protocol hid this completely, because it never looked at validation at all.
+**The SpikingJelly row is not a like-for-like accuracy comparison and should not be read as
+one.** Its neuron learns a single shared `tau`, which is its native parameterization, while
+jaxpike and Spyx learn a per-neuron `beta`. That is fewer decay parameters and a lower ceiling.
+The concession was made so the *speed* comparison would exercise SpikingJelly's fastest path;
+it makes the accuracy column a comparison of two different models.
 
-Augmentation is a random time shift plus input spike dropout, both label-preserving: a spoken
-digit shifted a few milliseconds is the same digit.
-
-### Training speed, sequential versus parallel-in-time
-
-Whole-epoch wall clock, including data transfer, optimizer and evaluation.
-
-| timesteps | batch | sequential | parallel | speedup |
-|---:|---:|---:|---:|---:|
-| 250 | 128 | 3.9 s | 1.5 s | 2.6× |
-| 1,000 | 64 | 23.7 s | 10.0 s | 2.4× |
-
-**Calibration that matters: ~2.5× end-to-end, not the 17–21× from the microbenchmark.**
-An epoch is more than time-stepping — host-to-device transfer, the Dense matmuls, the
-optimizer and evaluation are all untouched by parallelizing the time axis, and Amdahl's law
-does the rest. The 17–21× figure is the isolated forward/backward speedup and should always
-be labelled as such. **~2.5× on real training is the number to quote to users.**
-
-### Two bugs this run exposed, both worth keeping
-
-**The whole dataset was being pinned in GPU memory.** The loader returned device arrays, so
-SHD at 1000 timesteps tried to allocate 22.8 GB on a 16 GB card and OOMed before training
-started. `iterate_batches` now requires host arrays and transfers only the current batch.
-
-**Binary spikes were stored as float32.** Fixing that to uint8 cut the dataset from 22.8 GB
-to 5.3 GB and, more importantly, cut per-batch PCIe traffic 4×. Before the fix the T=1000
-comparison showed only 1.56× — the input pipeline had become the bottleneck and was masking
-the compute win. After it, 2.4×. Worth remembering as a general rule: spike data is binary,
-so storing or transferring it as float is always four times more traffic than necessary.
-
-
----
-
-## Online learning (e-prop) — 2026-08-04
-
-BPTT stores every timestep and walks backwards. e-prop carries an eligibility trace forward
-and accumulates the weight gradient in place, so memory does not grow with sequence length.
-
-### Memory: flat in T
-
-Peak scratch bytes for one gradient, 2-layer network, measured through XLA's allocation plan.
-
-| T | BPTT | e-prop | ratio |
-|---:|---:|---:|---:|
-| 100 | 210,984 | 3,128 | 68× |
-| 500 | 1,046,184 | 3,128 | 335× |
-| 1,000 | 2,090,024 | 3,128 | 668× |
-| 4,000 | 8,354,024 | 3,128 | **2671×** |
-
-The e-prop column is *identical* at every length. That is the whole point of the method, and
-it is what makes training on arbitrarily long streams possible.
-
-### Accuracy of the gradient
-
-Cosine similarity against the true BPTT gradient, 40 timesteps.
-
-| | reset-free (`LinearLIF`) | with reset (`LIF`) |
-|---|---:|---:|
-| layer feeding the loss | **1.000000** (exact to 2e-07) | 0.9988 |
-| hidden layer | 0.879 | 0.917 |
-
-Two independent sources of approximation, and it is worth keeping them apart. **Reset** feeds
-a spike back into its own membrane, a temporal path the factorization does not carry; without
-it, the membrane filter is the only route through time and the gradient is exact to float
-precision. **Depth** is the other: a hidden layer's learning signal would have to be filtered
-backwards through each membrane to be exact, which is a backward pass in time and the thing
-online learning exists to avoid, so it is propagated spatially only. Cosine near 0.9 is a
-well-aligned descent direction rather than the true gradient, and that is what makes it work.
-
-### One bug worth recording
-
-The first implementation evaluated the surrogate derivative at the **post-reset** membrane.
-Since the threshold comparison happens before reset, this silently mis-placed the derivative
-and dropped `LIF` gradient alignment to cosine 0.32 — while leaving `LinearLIF` exact, because
-without reset the two membranes are the same value. A reset-free-only test would have passed.
-
-The second implementation computed the right gradient but stacked activations across time,
-so it grew 10.0× with T against BPTT's 9.9× — the correct answer with none of the benefit the
-method exists for. Only measuring memory caught it.
-
-
----
-
-## Framework comparison on SHD — 2026-08-09, NVIDIA T4 (Modal)
-
-Every framework installed side by side and run in one container on one GPU, each in its own
-subprocess so that no library is measured while another holds device memory. Published numbers
-measured on other hardware are context, never evidence, so every figure here was re-measured.
-
-### Protocol
-
-`Linear(128, 128) -> LIF -> Linear(128, 128) -> LIF -> Linear(128, 20) -> LI`, no biases,
-Adam at 5e-4, cross-entropy on the time-integrated readout with 0.3 label smoothing, fp32,
-20 epochs at batch 256, T=256. Every framework receives bit-identical input arrays.
-
-| framework | version | path exercised |
-|---|---|---|
-| jaxpike | this repo | `unroll`, `unroll_checkpointed`, `unroll_parallel` |
-| SpikingJelly | 0.0.0.0.14 | multi-step, CuPy fused kernels |
-| snnTorch | 1.0.0 | `snn.Leaky`, Python time loop |
-| Norse | 1.1.0 | `LIFCell`, Python time loop |
-
-Three deliberate concessions to the competition, so that a favourable result cannot be
-dismissed as a rigged harness:
-
-1. The leaky readout is evaluated in closed form for the PyTorch models. `sum_t v[t]` is
-   linear in its input, so it collapses to a weighted sum over time — exact, and it spares
-   them a 256-iteration Python loop that JAX fuses away.
-2. SpikingJelly runs its fastest documented configuration, and the CuPy backend is verified at
-   runtime rather than assumed: `SpikingJellyNet.check_backend` raises if it has silently
-   fallen back to the Torch backend, which it otherwise does.
-3. Each framework keeps its native decay parameterization rather than being forced to match.
-
-### Training time and memory
-
-| framework | 20 epochs | peak memory |
-|---|---:|---:|
-| SpikingJelly, multi-step + CuPy | **6.02 ± 0.00 s** | 792.1 MB |
-| **jaxpike, `unroll`** | **8.12 ± 0.02 s** | 324.5 MB |
-| **jaxpike, `unroll_checkpointed`** | 11.07 ± 0.02 s | **64.2 MB** |
-| jaxpike, `unroll_parallel` | 15.80 ± 0.02 s | 288.1 MB |
-| Norse | 252.21 ± 8.33 s | 737.3 MB |
-| SpikingJelly, Torch backend | 260.62 ± 1.32 s | 696.3 MB |
-| snnTorch | 347.18 ± 17.52 s | 675.8 MB |
-
-jaxpike figures are steady state; compilation costs a further 14–19 s, paid once per shape,
-and the PyTorch frameworks pay nothing equivalent. Memory is XLA's planned peak scratch for
-jaxpike and `torch.cuda.max_memory_allocated` for the others; the two instruments are not
-identical and the comparison should be read as an order of magnitude, not a ratio.
-
-Anything that steps through time in Python loses by 31–43×, which is most of the field.
-SpikingJelly's fused CuPy kernel is **1.35× faster than the best jaxpike path** and is not
-beaten here.
-
-### Accuracy
-
-100 epochs, batch 256, T=256, hidden 128, single seed.
-
-| model | test accuracy |
-|---|---:|
-| Spyx, as reported in arXiv 2402.18994 | 0.70 – 0.75 |
-| jaxpike, matched model | **0.751** |
-| jaxpike, reset-free neuron (`unroll_parallel`) | 0.609 |
-
-Reset costs roughly 13 accuracy points on this task, which is the price of the parallel-in-time
+Reset costs roughly 14 accuracy points on this task, which is the price of the parallel-in-time
 path and the reason it is not the default.
 
 ### Where the remaining gap is

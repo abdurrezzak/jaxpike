@@ -110,8 +110,8 @@ batch 256, T=256. Full protocol, ablations and unfavourable results in
 | SpikingJelly, Torch backend | 260.62 s | 696.3 MB |
 | snnTorch 1.0.0 | 347.18 s | 675.8 MB |
 
-Accuracy is matched rather than traded away: **0.751 on SHD** under Spyx's published protocol,
-against their reported 0.70–0.75 band.
+Accuracy is matched rather than traded away: **0.7532 ± 0.0292 on SHD** across five seeds,
+against the 0.70–0.75 band published for Spyx under the same protocol.
 
 Anything that steps through time in a Python loop is 31–43× slower, which is most of the
 field. `unroll_checkpointed` holds a 256-step BPTT graph in 64 MB where SpikingJelly needs

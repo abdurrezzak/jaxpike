@@ -48,8 +48,8 @@ Training the same SHD network in every framework, side by side in one container 
 | Norse | 252.21 s | 737.3 MB |
 | snnTorch | 347.18 s | 675.8 MB |
 
-Accuracy on SHD is **0.751**, matching the 0.70–0.75 band published for Spyx under the same
-protocol. Other measured results:
+Accuracy on SHD is **0.7532 ± 0.0292** over five seeds, at the upper edge of the 0.70–0.75
+band published for Spyx under the same protocol. Other measured results:
 
 | Result | Number |
 |---|---|

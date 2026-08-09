@@ -51,5 +51,8 @@ First public release.
 Measured against snnTorch, SpikingJelly, Norse and Spyx, every framework running the identical
 model on identical arrays in one container on one NVIDIA T4. jaxpike trains 31–43× faster than
 snnTorch and Norse at 12× less memory than SpikingJelly, and remains 1.35× slower than
-SpikingJelly's fused CuPy kernel. Full protocol, ablations and negative results in
+SpikingJelly's fused CuPy kernel.
+
+Accuracy on SHD is 0.7532 ± 0.0292 over five seeds, at the upper edge of the 0.70–0.75 band
+published for Spyx under the same protocol. Full protocol, ablations and negative results in
 `benchmarks/README.md`.

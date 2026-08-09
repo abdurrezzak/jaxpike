@@ -40,7 +40,19 @@ batch 256, T=256.
 | snnTorch 1.0.0 | 347.18 s | 675.8 MB |
 
 jaxpike figures are steady state; compilation costs a further 14–19 s, paid once per shape.
-Test accuracy is 0.751, against the 0.70–0.75 band published for Spyx under this protocol.
+
+Accuracy over five seeds, same protocol, 100 epochs:
+
+| model | mean | sd | range |
+|---|---:|---:|---|
+| jaxpike, `unroll` | **0.7532** | 0.0292 | 0.7075 – 0.7822 |
+| SpikingJelly, multi-step + CuPy | 0.6754 | 0.0205 | 0.6440 – 0.6938 |
+| jaxpike, `unroll_parallel` (reset-free) | 0.6135 | 0.0189 | 0.5874 – 0.6392 |
+
+Seed-to-seed spread is about ±0.02, so a single run cannot be distinguished from its own
+variance. The SpikingJelly row is **not** a like-for-like accuracy comparison: its neuron
+learns one shared `tau` where jaxpike learns a per-neuron `beta`, a concession made so the
+speed comparison would exercise its fastest path.
 
 Three concessions are made to the other frameworks deliberately, so that a favourable result
 cannot be dismissed: their leaky readout is evaluated in closed form rather than looped,

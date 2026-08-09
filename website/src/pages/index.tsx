@@ -43,9 +43,9 @@ const RESULTS: {value: string; label: string; detail: string; to: string}[] = [
     to: '/docs/guides/online-learning',
   },
   {
-    value: '0.751',
+    value: '0.753',
     label: 'test accuracy on SHD',
-    detail: 'Matching the 0.70–0.75 band published for Spyx under the same protocol.',
+    detail: 'Mean of five seeds, sd 0.029, at the upper edge of the 0.70–0.75 band published for Spyx.',
     to: '/docs/getting-started/training-shd',
   },
 ];
