@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] — 2026-08-10
+
+### Added
+
+- Spiking Speech Commands support in the training example via `--dataset ssc`. SSC has shipped
+  in `jaxpike.data` since the first release but had never been trained on or reported. A
+  recurrent network reaches **0.5449** test accuracy, against ~0.50 feedforward and ~0.57
+  recurrent published by Cramer et al.
+- Two tutorials: learning without gradients (STDP, reward-modulated STDP and short-term
+  plasticity) and training on long sequences (choosing between the three execution strategies).
+- A model zoo page recording every reproduced result against its published reference.
+- `RELEASING.md`, documenting distribution, trusted publishing, and the release steps.
+
 ## [0.1.3] — 2026-08-10
 
 ### Removed

@@ -54,6 +54,10 @@ Subclass `Surrogate` and implement `relaxation`. The forward pass emits an exact
 and the backward pass differentiates the relaxation, so no custom VJP is involved and the
 gradient can be finite-difference tested.
 
+## Releasing
+
+See [RELEASING.md](RELEASING.md).
+
 ## Benchmarks
 
 Benchmarks that compare against other frameworks require an NVIDIA GPU and run remotely

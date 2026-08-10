@@ -86,12 +86,15 @@ Requires Python 3.11+.
 
 Full documentation, tutorials and API reference are at
 **[abdurrezzak.github.io/jaxpike](https://abdurrezzak.github.io/jaxpike/)**, covering the
-[quickstart](https://abdurrezzak.github.io/jaxpike/docs/getting-started/quickstart/), two tutorials on
-[building a first network](https://abdurrezzak.github.io/jaxpike/docs/tutorials/first-network/) and
-[writing your own neuron](https://abdurrezzak.github.io/jaxpike/docs/tutorials/custom-neurons/), a
+[quickstart](https://abdurrezzak.github.io/jaxpike/docs/getting-started/quickstart/), four tutorials —
+[a first network](https://abdurrezzak.github.io/jaxpike/docs/tutorials/first-network/),
+[writing your own neuron](https://abdurrezzak.github.io/jaxpike/docs/tutorials/custom-neurons/),
+[learning without gradients](https://abdurrezzak.github.io/jaxpike/docs/tutorials/stdp-learning/) and
+[training on long sequences](https://abdurrezzak.github.io/jaxpike/docs/tutorials/long-sequences/) — a
 [worked SHD training run](https://abdurrezzak.github.io/jaxpike/docs/getting-started/training-shd/), a
 [migration guide from snnTorch](https://abdurrezzak.github.io/jaxpike/docs/guides/coming-from-snntorch/),
-[why deep SNNs go silent](https://abdurrezzak.github.io/jaxpike/docs/guides/silent-networks/), and a full
+[why deep SNNs go silent](https://abdurrezzak.github.io/jaxpike/docs/guides/silent-networks/), a
+[model zoo](https://abdurrezzak.github.io/jaxpike/docs/model-zoo/) with reproduced results, and a full
 [API reference](https://abdurrezzak.github.io/jaxpike/docs/reference/neurons/).
 
 To build the site locally:

@@ -20,6 +20,8 @@ const sidebars: SidebarsConfig = {
       items: [
         'tutorials/first-network',
         'tutorials/custom-neurons',
+        'tutorials/stdp-learning',
+        'tutorials/long-sequences',
       ],
     },
     {
@@ -53,6 +55,7 @@ const sidebars: SidebarsConfig = {
         'reference/data',
       ],
     },
+    'model-zoo',
     'benchmarks',
   ],
 };

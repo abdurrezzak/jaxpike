@@ -631,7 +631,7 @@ wheels = [
 
 [[package]]
 name = "jaxpike"
-version = "0.1.3"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "equinox" },
