@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-08-10
+
+### Documentation
+
+- The README, which is the project description on PyPI, never mentioned the plasticity rules.
+  `STDP`, `stdp_window`, `TsodyksMarkram` with the five `MARKRAM_PRESETS`, and `DopamineSTDP`
+  have shipped since 0.1.0 but were invisible to anyone reading the front page. Added a section
+  with worked examples.
+
 ## [0.1.1] — 2026-08-10
 
 ### Fixed

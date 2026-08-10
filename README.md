@@ -55,9 +55,10 @@ Four things get it there:
   surrogate gradient is one smooth function whose derivative comes from autodiff. There is no
   supported-model list to fall off.
 
-Plus explicit functional state, so long sequences stream in chunks and truncated BPTT is free,
-and NIR import and export, so trained models move to Loihi, SpiNNaker2, Speck and the rest of
-the neuromorphic ecosystem.
+Plus explicit functional state, so long sequences stream in chunks and truncated BPTT is free;
+**local learning rules** — STDP, reward-modulated STDP and Tsodyks–Markram short-term
+plasticity with the Markram presets — alongside BPTT and e-prop; and NIR import and export, so
+trained models move to Loihi, SpiNNaker2, Speck and the rest of the neuromorphic ecosystem.
 
 ## Installation
 
@@ -232,6 +233,50 @@ A LIF membrane is an exponential moving average, which attenuates signal standar
 activations therefore produce membranes six times smaller than intended, sitting below
 threshold. `jp.lif_gain(tau)` returns the compensating factor.
 
+## Plasticity
+
+Local learning rules that use no loss function, no gradients and no backward pass. A synapse
+changes strength from the relative timing of the spikes at its two ends, which is why
+neuromorphic hardware can implement them directly.
+
+![Plasticity](https://raw.githubusercontent.com/abdurrezzak/jaxpike/main/docs/figures/plasticity_light.png)
+
+**Spike-timing-dependent plasticity.** Whole spike trains in, updated weights out:
+
+```python
+rule = jp.STDP(tau_pre=20.0, tau_post=20.0)
+weight, state = rule(weight, pre_spikes, post_spikes)   # (T, batch, n) trains
+```
+
+`jp.stdp_window(delta_t)` returns the learning window itself, for plotting or for checking
+parameters against a published figure.
+
+**Short-term plasticity** — depression and facilitation acting on transmission over hundreds of
+milliseconds without changing the underlying weight. Five presets from the Markram
+characterization of cortical synapses ship with it:
+
+```python
+rule = jp.TsodyksMarkram(*jp.MARKRAM_PRESETS["depressing"])   # or facilitating,
+state = rule.init_state(input_shape)                          # F1_facilitating,
+state, transmitted = rule(state, spikes)                      # F2_depressing, F3_mixed
+```
+
+`TsodyksMarkram` follows the ordinary state contract, so it drops into a `Sequential` between a
+neuron and the layer it drives.
+
+**Reward-modulated STDP** solves the distal reward problem: a spike pair leaves a slowly
+decaying eligibility trace, and the weight only changes when dopamine arrives. With
+`tau_c = 1000`, a reward a full second late still finds the trace alive and credits the right
+synapse.
+
+```python
+rule = jp.DopamineSTDP(tau_c=1000.0)
+weight, state = rule(weight, pre_spikes, post_spikes, reward)
+```
+
+Full details in the [plasticity guide](https://abdurrezzak.github.io/jaxpike/docs/guides/plasticity/) and
+[reference](https://abdurrezzak.github.io/jaxpike/docs/reference/plasticity/).
+
 ## Visualization
 
 ![Visualization gallery](https://raw.githubusercontent.com/abdurrezzak/jaxpike/main/docs/figures/gallery_light.png)
@@ -284,7 +329,8 @@ on the far side.
 ## Roadmap
 
 Implemented and benchmarked: the neuron zoo, arbitrary topologies, three execution strategies,
-surrogate gradients, plasticity, NIR interchange, visualization, and e-prop.
+surrogate gradients, STDP and short-term plasticity, e-prop, NIR interchange, and
+visualization.
 
 Not yet built, in priority order:
 
