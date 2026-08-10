@@ -1,17 +1,16 @@
-"""Train a spiking network on the Spiking Heidelberg Digits.
+"""Train a spiking network on Spiking Heidelberg Digits or Spiking Speech Commands.
 
-SHD is the field's standard temporal benchmark: 20 classes (digits 0-9 spoken in English and
-German), converted to spike trains across 700 input channels by a cochlea model. Unlike
-rate-coded MNIST the temporal structure is real, and the sequences are long -- which is where
-`unroll_parallel` earns its keep.
+Both are cochlea-model encodings of spoken audio across 700 input channels, and both have real
+temporal structure rather than the rate coding of spiking MNIST. SHD is 20 classes of spoken
+digits; SSC is 35 keyword classes and roughly ten times the data, which makes it the harder and
+more informative of the two.
 
-Reference accuracies from Cramer et al. (2020), who introduced the dataset: ~48% for a
-feedforward spiking net, ~71% for a recurrent one. Later work reaches the 80s-90s with
-adaptive neurons and heavier training. A plain feedforward net in the high 40s to 60s is the
-honest target here.
+Reference accuracies from Cramer et al. (2020), who introduced both datasets: on SHD, ~48% for
+a feedforward spiking net and ~71% for a recurrent one; on SSC, ~50% feedforward and ~57%
+recurrent. Later work reaches higher with adaptive neurons and heavier training.
 
-    python examples/shd.py --epochs 20
-    modal run benchmarks/gpu/run_modal.py --bench shd     # on a GPU
+    python examples/shd.py --dataset shd --epochs 20
+    python examples/shd.py --dataset ssc --epochs 20
 """
 
 from __future__ import annotations
@@ -28,16 +27,29 @@ import optax
 
 import jaxpike as jp
 
-N_CHANNELS, N_CLASSES = 700, 20
+N_CHANNELS = 700
+
+# Both datasets share the cochlea encoding and channel count, and differ in class count and
+# scale, so one script covers them by looking the class count up rather than hard-coding it.
+DATASETS = {"shd": (jp.data.shd, 20), "ssc": (jp.data.ssc, 35)}
 
 
-def load(split: str, root: Path, *, timesteps: int):
-    """Thin wrapper over `jaxpike.data.shd`, kept so older scripts still import `load`."""
-    dataset = jp.data.shd(split, root, timesteps=timesteps)
-    return dataset.inputs, dataset.labels
+def load(split: str, root: Path, *, timesteps: int, dataset: str = "shd"):
+    """Load one split of `dataset` as dense `(N, T, channels)` spikes and integer labels."""
+    loader, _ = DATASETS[dataset]
+    data = loader(split, root, timesteps=timesteps)
+    return data.inputs, data.labels
 
 
-def build(hidden: int, key, *, tau: float, threshold: float, recurrent: bool = False):
+def build(
+    hidden: int,
+    key,
+    *,
+    tau: float,
+    threshold: float,
+    recurrent: bool = False,
+    n_classes: int = 20,
+):
     """Feedforward by default; `recurrent` adds a self-connection on the hidden layer.
 
     The recurrent variant is the architecture Cramer et al. report ~71% with, against ~48%
@@ -56,7 +68,7 @@ def build(hidden: int, key, *, tau: float, threshold: float, recurrent: bool = F
             jp.LinearLIF(tau=tau, threshold=threshold),
             jp.Dense(hidden, hidden, key=k2, gain=gain),
             jp.LinearLIF(tau=tau, threshold=threshold),
-            jp.Dense(hidden, N_CLASSES, key=k3, gain=gain),
+            jp.Dense(hidden, n_classes, key=k3, gain=gain),
             jp.LeakyIntegrator(tau=tau),
         )
     return jp.Graph(
@@ -66,7 +78,7 @@ def build(hidden: int, key, *, tau: float, threshold: float, recurrent: bool = F
             "w_rec": jp.Dense(hidden, hidden, key=k2, gain=0.2),
             "w_h2": jp.Dense(hidden, hidden, key=k3, gain=gain),
             "h2": jp.LIF(tau=tau, threshold=threshold, reset="subtract"),
-            "w_out": jp.Dense(hidden, N_CLASSES, key=k4, gain=gain),
+            "w_out": jp.Dense(hidden, n_classes, key=k4, gain=gain),
             "out": jp.LeakyIntegrator(tau=tau),
         },
         edges=[
@@ -112,7 +124,8 @@ def main() -> None:
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--rate-target", type=float, default=0.05)
     ap.add_argument("--rate-weight", type=float, default=0.0)
-    ap.add_argument("--data", type=Path, default=Path("data/shd"))
+    ap.add_argument("--dataset", choices=sorted(DATASETS), default="shd")
+    ap.add_argument("--data", type=Path, default=None, help="defaults to data/<dataset>")
     ap.add_argument("--sequential", action="store_true", help="disable parallel-in-time")
     ap.add_argument("--recurrent", action="store_true", help="recurrent hidden layer (Graph)")
     ap.add_argument("--augment", action="store_true", help="time shift + input spike dropout")
@@ -120,9 +133,11 @@ def main() -> None:
     ap.add_argument("--drop", type=float, default=0.1, help="input spike dropout probability")
     args = ap.parse_args()
 
-    print(f"device: {jax.devices()[0]}")
-    x_train, y_train = load("train", args.data, timesteps=args.timesteps)
-    x_test, y_test = load("test", args.data, timesteps=args.timesteps)
+    root = args.data if args.data is not None else Path(f"data/{args.dataset}")
+    n_classes = DATASETS[args.dataset][1]
+    print(f"device: {jax.devices()[0]}   dataset: {args.dataset} ({n_classes} classes)")
+    x_train, y_train = load("train", root, timesteps=args.timesteps, dataset=args.dataset)
+    x_test, y_test = load("test", root, timesteps=args.timesteps, dataset=args.dataset)
 
     # Hold out a validation split for model selection. Picking the best epoch by test accuracy
     # fits the test set through the choice of epoch and reports a number that will not
@@ -146,6 +161,7 @@ def main() -> None:
         jax.random.key(0),
         tau=args.tau,
         threshold=args.threshold,
+        n_classes=n_classes,
         recurrent=args.recurrent,
     )
     print(
