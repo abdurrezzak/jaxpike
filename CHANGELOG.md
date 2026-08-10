@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-08-10
+
+### Removed
+
+- `Izhikevich` carried a `log_tau_unused` field, added to keep its pytree non-empty for
+  gradients. Gradients flow correctly through a neuron with no array leaves, so the field was
+  dead weight in a public API.
+
+### Added
+
+- Docstrings for `accuracy`, `cross_entropy` and `spike_count`, the last three public callables
+  without one.
+- Reference documentation for `STDPState`, `DopamineState` and `MarkramState`.
+
 ## [0.1.2] — 2026-08-10
 
 ### Documentation

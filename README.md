@@ -245,7 +245,7 @@ neuromorphic hardware can implement them directly.
 
 ```python
 rule = jp.STDP(tau_pre=20.0, tau_post=20.0)
-weight, state = rule(weight, pre_spikes, post_spikes)   # (T, batch, n) trains
+weight, state = rule(weight, pre_spikes, post_spikes)  # (T, batch, n) trains
 ```
 
 `jp.stdp_window(delta_t)` returns the learning window itself, for plotting or for checking
@@ -256,9 +256,9 @@ milliseconds without changing the underlying weight. Five presets from the Markr
 characterization of cortical synapses ship with it:
 
 ```python
-rule = jp.TsodyksMarkram(*jp.MARKRAM_PRESETS["depressing"])   # or facilitating,
-state = rule.init_state(input_shape)                          # F1_facilitating,
-state, transmitted = rule(state, spikes)                      # F2_depressing, F3_mixed
+rule = jp.TsodyksMarkram(*jp.MARKRAM_PRESETS["depressing"])  # or facilitating,
+state = rule.init_state(input_shape)  # F1_facilitating,
+state, transmitted = rule(state, spikes)  # F2_depressing, F3_mixed
 ```
 
 `TsodyksMarkram` follows the ordinary state contract, so it drops into a `Sequential` between a

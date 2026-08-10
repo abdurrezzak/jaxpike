@@ -125,9 +125,8 @@ def main() -> None:
     x_test, y_test = load("test", args.data, timesteps=args.timesteps)
 
     # Hold out a validation split for model selection. Picking the best epoch by test accuracy
-    # -- which an earlier version of this script did -- silently fits the test set through the
-    # choice of epoch and reports a number that will not reproduce. Select on validation,
-    # report test once, at the selected epoch.
+    # fits the test set through the choice of epoch and reports a number that will not
+    # reproduce. Select on validation, report test once, at the selected epoch.
     rng = np.random.default_rng(0)
     order = rng.permutation(len(y_train))
     n_val = max(args.batch, int(0.1 * len(order)))

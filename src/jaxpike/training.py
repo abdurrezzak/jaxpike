@@ -39,10 +39,12 @@ def max_membrane_logits(membrane: Float[Array, "T B C"]) -> Float[Array, "B C"]:
 
 
 def cross_entropy(logits: Float[Array, "B C"], labels: Int[Array, " B"]) -> Array:
+    """Mean softmax cross-entropy against integer class labels."""
     return jnp.mean(optax.softmax_cross_entropy_with_integer_labels(logits, labels))
 
 
 def accuracy(logits: Float[Array, "B C"], labels: Int[Array, " B"]) -> Array:
+    """Fraction of the batch whose highest-scoring class is the correct one."""
     return jnp.mean(jnp.argmax(logits, axis=-1) == labels)
 
 

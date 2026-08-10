@@ -264,9 +264,9 @@ class Trainer:
     """A compiled training run, separated from the act of running it.
 
     Compilation is a real cost but a one-time one, and the PyTorch libraries this is measured
-    against pay nothing like it. Building the jitted function once, here, means a timed trial
-    measures execution -- previously every trial rebuilt the closure, missed JAX's cache and
-    silently re-paid the full compile.
+    against pay nothing like it. JAX caches compilations against the function object, so a
+    closure rebuilt per call misses the cache and re-pays the full compile. Building it once
+    here means a timed trial measures execution.
     """
 
     def __init__(self, model, runner, inputs, labels, *, batch_size: int, lr: float):

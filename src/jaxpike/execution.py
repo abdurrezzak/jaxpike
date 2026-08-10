@@ -198,6 +198,7 @@ def spike_rate(spikes: Float[Array, "T *rest"]) -> Array:
 
 
 def spike_count(spikes: Float[Array, "T *rest"]) -> Array:
+    """Total spikes emitted per unit over the whole sequence."""
     return jnp.sum(spikes, axis=0)
 
 

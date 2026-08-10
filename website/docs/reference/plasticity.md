@@ -138,6 +138,22 @@ synapse.
 
 ![Plasticity](/img/figures/plasticity_light.png)
 
+## State objects
+
+Each rule carries its traces in an explicit state object, returned as the second element of a
+call and accepted back to continue across chunks. They are ordinary pytrees.
+
+| type | carried by | holds |
+|---|---|---|
+| `STDPState` | `STDP` | pre- and postsynaptic eligibility traces |
+| `DopamineState` | `DopamineSTDP` | the STDP traces, the slow eligibility trace, and dopamine |
+| `MarkramState` | `TsodyksMarkram` | the resource pool and the release probability |
+
+```python
+state = rule.init_state(batch, n_pre, n_post)     # STDP and DopamineSTDP
+state = rule.init_state(input_shape)              # TsodyksMarkram
+```
+
 ## See also
 
 - [Plasticity guide](../guides/plasticity.md) — worked examples and when to reach for each rule

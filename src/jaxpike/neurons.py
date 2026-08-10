@@ -311,7 +311,6 @@ class Izhikevich(eqx.Module):
     It is nonlinear in time, so there is no `parallel_apply` and `unroll_parallel` will raise.
     """
 
-    log_tau_unused: Float[Array, "..."]  # placeholder keeps the pytree non-empty for grads
     surrogate: Surrogate
     a: float = eqx.field(static=True)
     b: float = eqx.field(static=True)
@@ -337,7 +336,6 @@ class Izhikevich(eqx.Module):
     ):
         if substeps < 1:
             raise ValueError(f"substeps must be >= 1, got {substeps}")
-        self.log_tau_unused = jnp.zeros(())
         self.surrogate = surrogate if surrogate is not None else FastSigmoid()
         self.a, self.b, self.c, self.d = a, b, c, d
         self.v_peak, self.v_scale = v_peak, v_scale
