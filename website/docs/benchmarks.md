@@ -64,6 +64,22 @@ kernel is **1.35× faster than the best jaxpike path** and is not beaten. Ablati
 whole gap: 83% of a jaxpike training step is the neuron time loop and 71% is the backward
 pass, while the hoisted `Dense` layers already compile to a single large matrix multiply.
 
+## Reduced precision
+
+A T4 has fp16 tensor cores an fp32 network never touches, so mixed precision is the obvious
+lever. Measured, with membrane state kept in fp32 throughout:
+
+| configuration | fp32 | fp16 weights | speedup |
+|---|---:|---:|---:|
+| isolated GEMM, hidden 128 | 0.559 ms | 0.266 ms | **2.10×** |
+| isolated GEMM, hidden 512 | 7.712 ms | 1.483 ms | **5.20×** |
+| training step, hidden 128 | 11.998 ms | 11.522 ms | 1.04× |
+| training step, hidden 512 | 47.477 ms | 42.405 ms | 1.12× |
+
+**A 5.2× faster matrix multiply buys 12% of a training step**, because the neuron time loop is
+83% of it and gains nothing. Casting per call is *slower* than fp32 at hidden 128 — the cast
+costs more than the tensor cores save — so a naive `.astype(float16)` is a regression.
+
 ## How memory is measured
 
 `jax.jit(fn).lower(...).compile().memory_analysis().temp_size_in_bytes` — XLA's own peak scratch

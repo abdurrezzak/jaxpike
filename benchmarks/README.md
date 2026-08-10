@@ -273,7 +273,44 @@ outputs and gradients before being timed — finds no configuration that beats t
 a 0.9% noise floor, everything except `unroll=1` and the parallel path is a statistical tie.
 Further speed requires new code, not new settings.
 
-Three optimizations that were expected to help and did not, recorded because a benchmark suite
+### Reduced precision, and why it does not help
+
+A T4 has fp16 tensor cores that an fp32 network never touches, and GEMMs are 31% of a training
+step, so mixed precision is the obvious remaining lever. It was measured rather than assumed
+(`benchmarks/precision_probe.py`). Membrane state stays fp32 throughout: a leaky integrator runs
+for thousands of steps and low-precision accumulation drifts enough to flip threshold crossings.
+
+| GEMM | fp32 | fp16, weights resident | fp16, cast per call |
+|---|---:|---:|---:|
+| `(65536, 128) @ (128, 128)` | 0.559 ms | 0.266 ms (**2.10x**) | 0.721 ms (0.78x) |
+| `(65536, 512) @ (512, 512)` | 7.712 ms | 1.483 ms (**5.20x**) | 3.039 ms (2.54x) |
+
+End-to-end, the same change on a full training step:
+
+| configuration | fp32 | fp16 weights | speedup |
+|---|---:|---:|---:|
+| batch 256, T=256, hidden 128 | 11.998 ms | 11.522 ms | 1.04x |
+| batch 256, T=256, hidden 512 | 47.477 ms | 42.405 ms | 1.12x |
+
+**A 5.2x faster GEMM buys 12% of a training step.** Amdahl's law is the whole explanation: the
+neuron time loop is 83% of the step and gains nothing from tensor cores, so even an infinitely
+fast matrix multiply would cap the gain near 1.2x. Neither figure closes the 1.35x gap to
+SpikingJelly.
+
+Two details worth keeping. At hidden 128, casting per call is **slower than fp32** — the cast
+costs more than the tensor cores save at that shape, so a naive `.astype(float16)` on the layers
+is a regression rather than an optimization. And the gain only appears with weights already
+resident in low precision, which means real mixed-precision training rather than a cast at the
+call site.
+
+With the configuration search exhausted and reduced precision measured at 1.04-1.12x, no
+remaining change to the XLA path closes the gap. What is left is a fused time-loop kernel, and
+that is untested rather than unpromising: Pallas requires compute capability 8.0 or higher and
+the hardware available to this project is sm_75.
+
+### Optimizations that measured as no improvement
+
+Four changes were expected to help and did not, recorded because a benchmark suite
 that reports only its wins is marketing:
 
 | change | expectation | measured |
@@ -281,3 +318,4 @@ that reports only its wins is marketing:
 | cast inputs per batch rather than per epoch | remove a 1.07 GB buffer | no change |
 | skip the surrogate relaxation in the forward pass | remove 16.7M transcendentals | no change |
 | recompute the neuron step instead of storing residuals | less memory traffic | 0.91×, but 22% less scratch |
+| fp16 weights for the matrix multiplies | tensor cores, 8× the fp32 peak | 1.04–1.12× |

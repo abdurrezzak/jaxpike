@@ -215,6 +215,21 @@ def autosearch(batch: int = 256, timesteps: int = 256, hidden: int = 128) -> str
 
 
 @app.function(gpu=GPU, timeout=60 * 60, volumes={"/root/data": CACHE})
+def precision(batch: int = 256, timesteps: int = 256, hidden: int = 128) -> str:
+    """Does reduced-precision matmul close the gap to hand-written kernels?"""
+    return _run(
+        [
+            "benchmarks/precision_probe.py",
+            f"--batch={batch}",
+            f"--timesteps={timesteps}",
+            f"--hidden={hidden}",
+        ],
+        "precision",
+        JAX_ENV,
+    )
+
+
+@app.function(gpu=GPU, timeout=60 * 60, volumes={"/root/data": CACHE})
 def pallas(batch: int = 256, neurons: int = 128, timesteps: int = 256) -> str:
     """Does a fused time-loop kernel beat lax.scan?"""
     return _run(
@@ -270,11 +285,15 @@ def main(
     libraries: str = ALL_TORCH,
     seeds: str = "0,1,2,3,4",
     variants: str = "sequential,parallel",
+    hidden: int = 128,
 ) -> None:
     suites = {
         "smoke": lambda: smoke.remote(),
         "scan-unroll": lambda: scan_unroll.remote(),
         "pallas": lambda: pallas.remote(timesteps=int(timesteps.split(",")[0])),
+        "precision": lambda: precision.remote(
+            timesteps=int(timesteps.split(",")[0]), hidden=hidden
+        ),
         "autosearch": lambda: autosearch.remote(timesteps=int(timesteps.split(",")[0])),
         "jaxpike": lambda: jaxpike.remote(epochs=epochs, trials=trials, batches=batches),
         "speed": lambda: speed.remote(
