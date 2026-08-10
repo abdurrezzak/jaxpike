@@ -26,6 +26,7 @@ image = (
         "optax>=0.2.2",
         "jaxtyping>=0.2.28",
         "h5py>=3.11",
+        "tonic>=1.4",
         "numpy>=1.26",
     )
     .add_local_dir(REPO / "src", "/root/src")
@@ -50,6 +51,7 @@ def run(bench: str = "memory", args: list[str] | None = None) -> str:
         "network": ["benchmarks/network_parallel.py"],
         "reset": ["benchmarks/reset_parallel.py"],
         "shd": ["examples/shd.py"],
+        "nmnist": ["examples/nmnist.py"],
     }
     targets = list(scripts.values()) if bench == "all" else [scripts[bench]]
 
