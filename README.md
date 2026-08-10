@@ -83,11 +83,17 @@ Requires Python 3.11+.
 
 ## Documentation
 
-Full documentation, tutorials and API reference live in [`website/`](https://github.com/abdurrezzak/jaxpike/blob/main/website/) and cover the
-[quickstart](https://github.com/abdurrezzak/jaxpike/blob/main/website/docs/getting-started/quickstart.md), a
-[worked SHD training run](https://github.com/abdurrezzak/jaxpike/blob/main/website/docs/getting-started/training-shd.md), a
-[migration guide from snnTorch](https://github.com/abdurrezzak/jaxpike/blob/main/website/docs/guides/coming-from-snntorch.md), and
-[why deep SNNs go silent](https://github.com/abdurrezzak/jaxpike/blob/main/website/docs/guides/silent-networks.md).
+Full documentation, tutorials and API reference are at
+**[abdurrezzak.github.io/jaxpike](https://abdurrezzak.github.io/jaxpike/)**, covering the
+[quickstart](https://abdurrezzak.github.io/jaxpike/docs/getting-started/quickstart/), two tutorials on
+[building a first network](https://abdurrezzak.github.io/jaxpike/docs/tutorials/first-network/) and
+[writing your own neuron](https://abdurrezzak.github.io/jaxpike/docs/tutorials/custom-neurons/), a
+[worked SHD training run](https://abdurrezzak.github.io/jaxpike/docs/getting-started/training-shd/), a
+[migration guide from snnTorch](https://abdurrezzak.github.io/jaxpike/docs/guides/coming-from-snntorch/),
+[why deep SNNs go silent](https://abdurrezzak.github.io/jaxpike/docs/guides/silent-networks/), and a full
+[API reference](https://abdurrezzak.github.io/jaxpike/docs/reference/neurons/).
+
+To build the site locally:
 
 ```bash
 cd website && npm install && npm start   # Node 20+

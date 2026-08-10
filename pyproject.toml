@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jaxpike"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fast, flexible spiking neural networks in JAX."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -55,8 +55,8 @@ bench = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/abdurrezzak/jaxpike"
-Documentation = "https://github.com/abdurrezzak/jaxpike#readme"
+Homepage = "https://abdurrezzak.github.io/jaxpike/"
+Documentation = "https://abdurrezzak.github.io/jaxpike/"
 Repository = "https://github.com/abdurrezzak/jaxpike"
 Issues = "https://github.com/abdurrezzak/jaxpike/issues"
 Changelog = "https://github.com/abdurrezzak/jaxpike/blob/main/CHANGELOG.md"
