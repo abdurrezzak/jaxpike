@@ -64,6 +64,12 @@ the SHD benchmark does, is not an option at this scale.
 
 ## What is not here
 
-No convolutional or event-camera results. `Conv2d`, `Pool2d` and the NHWC layout are
-implemented and tested, and the [convnets guide](./guides/convnets.md) shows the architecture,
-but no DVS Gesture or N-MNIST training run has been done, so nothing is claimed.
+**No measured event-camera accuracy.** `examples/nmnist.py` trains a spiking convnet on
+N-MNIST and its architecture is verified — correct output shape and a forward pass through
+`unroll_parallel` on `(T, batch, 34, 34, 2)` — but no accuracy number has been produced,
+because the `tonic` dataset dependency would not install in the benchmark image. The example
+ships; the row does not, and will not until there is a number behind it.
+
+**No adaptive-neuron or deep-architecture results.** `ALIF` and `Izhikevich` are implemented
+and tested but have not been trained on a benchmark, so the published accuracies that use
+adaptive thresholds are not reproduced here.

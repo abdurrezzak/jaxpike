@@ -19,7 +19,9 @@ import modal
 REPO = pathlib.Path(__file__).parent.parent.parent
 
 image = (
-    modal.Image.debian_slim(python_version="3.12")
+    # 3.11 rather than 3.12: tonic pulls in expelliarmus, whose 3.12 wheel exposes an
+    # unresolved symbol and whose sdist does not compile.
+    modal.Image.debian_slim(python_version="3.11")
     .pip_install(
         "jax[cuda12]>=0.4.35",
         "equinox>=0.11.4",
